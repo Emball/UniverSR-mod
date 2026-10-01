@@ -134,3 +134,7 @@ system:
   visqol_fraction: 1.0
   keep_lq_below_cutoff: auto   # auto: keep real bins below the cutoff in arm B, regenerate them in arm C
   lsd_cutoff_hz: 16000     # LSD is measured above this frequency (the model cutoff is full band, so it can't define the region)
+  t_skew: 1.5              # flow time t = 1-(1-u)^p, u uniform; p > 1 spends more training on the clean end (fine detail), 1 = uniform
+  aux_logmag_weight: 0.1      # weight of a log-magnitude loss on the one-step clean estimate, equal across frequency; 0 = off
+  alpha_start: 0.2           # compression exponent the anneal starts from (the checkpoint's); null = no anneal
+  alpha_anneal_steps: 3000    # steps to slide from alpha_start to transform.alpha, counted from the step a run starts or resumes at

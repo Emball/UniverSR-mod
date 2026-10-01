@@ -45,6 +45,28 @@ def hfnr(est, ref, sr=48000, lo_hz=8000.0, hi_hz=22000.0):
     return (flatness(est) + eps) / (flatness(ref) + eps)
 
 
+BAND_EDGES_HZ = ((3750.0, 8000.0), (8000.0, 12000.0), (12000.0, 16000.0), (16000.0, 22050.0))
+BAND_LABELS = ("3.75-8k", "8-12k", "12-16k", "16-22k")
+
+
+def band_db(est, ref, sr, edges=BAND_EDGES_HZ):
+    """Mean per-bin log-magnitude difference (est minus ref, dB) per band."""
+    n_fft, hop = 2048, 512
+    e, r = _flat(est), _flat(ref)
+    n = min(e.shape[-1], r.shape[-1])
+    me = _mag(e[..., :n], n_fft, hop).clamp(min=1e-10)
+    mr = _mag(r[..., :n], n_fft, hop).clamp(min=1e-10)
+    bw = sr / n_fft
+    out = []
+    for lo, hi in edges:
+        bl, bh = int(lo / bw), min(int(hi / bw), n_fft // 2)
+        if bh <= bl:
+            out.append(float("nan"))
+            continue
+        out.append(float((20 * torch.log10(me[:, bl:bh]) - 20 * torch.log10(mr[:, bl:bh])).mean()))
+    return out
+
+
 def lsd(est, ref, cutoff_hz, sr=48000, n_fft=1024, hop=256):
     e = _flat(est)
     r = _flat(ref)

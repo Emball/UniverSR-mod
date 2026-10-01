@@ -125,6 +125,8 @@ def load_restorer(weights=None, conf_dir=None, device="auto", precision="auto", 
     keep = (not model.aligned_input) if keep in ("auto", None) else bool(keep)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu") if device == "auto" else torch.device(device)
     model = model.to(dev).eval()
+    if ck is not None and ck.get("alpha") is not None and ext == ".ckpt":
+        tcfg = {**tcfg, "alpha": float(ck["alpha"])}
     transform = make_transform(tcfg)
     if hasattr(transform, "to"):
         transform = transform.to(dev)

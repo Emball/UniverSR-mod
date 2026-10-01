@@ -45,6 +45,10 @@ class UniverSRSystem(pl.LightningModule):
         lsd_cutoff_hz=None,
         mem_log=False,
         mem_log_every=50,
+        t_skew=1.0,
+        aux_logmag_weight=0.0,
+        alpha_start=None,
+        alpha_anneal_steps=0,
     ):
         super().__init__()
         self.audio_model = model
@@ -63,6 +67,12 @@ class UniverSRSystem(pl.LightningModule):
         self.val_audio_dir = val_audio_dir
         self.val_seed = int(val_seed)
         self.mem_log = bool(mem_log)
+        self.t_skew = float(t_skew)
+        self.aux_logmag_weight = float(aux_logmag_weight)
+        self.alpha_start = None if alpha_start is None else float(alpha_start)
+        self.alpha_anneal_steps = int(alpha_anneal_steps or 0)
+        self._final_alpha = float(transform.compress.compression_exponent)
+        self._alpha_origin = None
         self.mem_log_every = int(mem_log_every)
         self.val_step_override = None
         self._chunk_t = None
@@ -99,6 +109,7 @@ class UniverSRSystem(pl.LightningModule):
         self._last_val_hfnr = None
         self._last_val_visqol = None
         self._last_val_lsd = None
+        self._baseline = None
 
     def forward(self, x, t, y, cutoff_bins):
         return self.audio_model(x, t, y, cutoff_bins)
@@ -106,13 +117,27 @@ class UniverSRSystem(pl.LightningModule):
     def _bins(self, cutoff_hz):
         return hz_to_cutoff_bins(cutoff_hz, self.sample_rate, self.n_fft).to(self.device).reshape(-1)
 
-    def _cfm_loss(self, hq, lq, cutoff_hz, t=None, generator=None):
+    def current_alpha(self):
+        if self.alpha_start is None or self.alpha_anneal_steps <= 0:
+            return self._final_alpha
+        if self._alpha_origin is None:
+            return self.alpha_start
+        f = min(1.0, max(0.0, (self.global_step - self._alpha_origin) / self.alpha_anneal_steps))
+        return self.alpha_start + (self._final_alpha - self.alpha_start) * f
+
+    def _apply_alpha(self):
+        self.transform.compress.compression_exponent = self.current_alpha()
+
+    def _cfm_loss(self, hq, lq, cutoff_hz, t=None, generator=None, train=False):
+        self._apply_alpha()
         Z = to_spec(self.transform, hq)
         Y = to_spec(self.transform, lq)
         Z_hr = Z[:, :, self.audio_model.gen_start_bin:]
         B = Z.shape[0]
         if t is None:
             t = torch.rand(B, 1, 1, 1, device=Z.device)
+            if self.t_skew != 1.0:
+                t = 1.0 - (1.0 - t) ** self.t_skew
         if generator is None:
             x0 = self.path.sample_source(Z_hr)
         else:
@@ -122,11 +147,20 @@ class UniverSRSystem(pl.LightningModule):
         self._last_ctx = (xt.detach(), t.detach(), Y.detach(), bins, {"hq": hq, "lq": lq, "Z": Z})
         out = self.audio_model(xt, t, Y, bins)
         target = self.path.get_target_vector_field(xt, x0, Z_hr, t)
-        return flow_matching_loss(out, target, self.band_w)
+        loss = flow_matching_loss(out, target, self.band_w)
+        if train and self.aux_logmag_weight > 0:
+            x1_hat = xt.float() + (1.0 - t) * out.float()
+            m_hat = x1_hat.square().sum(1).add(1e-12).sqrt()
+            m_true = Z_hr.float().square().sum(1).add(1e-12).sqrt()
+            d = (torch.log(m_hat + 1e-6) - torch.log(m_true + 1e-6)) / self.current_alpha()
+            aux = (d.square() * t.reshape(-1, 1, 1).square()).mean()
+            self.log("train_aux", aux.detach(), on_step=True, logger=True, batch_size=hq.shape[0])
+            loss = loss + self.aux_logmag_weight * aux
+        return loss
 
     def training_step(self, batch, batch_idx):
         hq, lq, cutoff_hz = batch
-        loss = self._cfm_loss(hq, lq, cutoff_hz)
+        loss = self._cfm_loss(hq, lq, cutoff_hz, train=True)
         self._check_finite(loss)
         self.log("train_loss", loss, on_step=True, prog_bar=True, logger=True, batch_size=hq.shape[0])
         return loss
@@ -161,6 +195,11 @@ class UniverSRSystem(pl.LightningModule):
                 self._ema_pending = None
 
     def on_train_start(self):
+        if self.alpha_start is not None and self.alpha_anneal_steps > 0:
+            if self._alpha_origin is None:
+                self._alpha_origin = int(self.global_step)
+            log.info("[alpha] anneal %.3f -> %.3f over %d steps from step %d (now %.4f)", self.alpha_start,
+                     self._final_alpha, self.alpha_anneal_steps, self._alpha_origin, self.current_alpha())
         if self.ema_decay <= 0:
             return
         self._ensure_ema()
@@ -200,6 +239,7 @@ class UniverSRSystem(pl.LightningModule):
         return torch.float16 if "16" in p else None
 
     def on_validation_start(self):
+        self._apply_alpha()
         if self.mem_log:
             memlog.snap("val start (before ema/empty)", reset_peak=True)
         if self._ema is None and self._ema_pending is not None:
@@ -335,6 +375,7 @@ class UniverSRSystem(pl.LightningModule):
             "lsd_high": M.lsd(est, hq, self.lsd_cutoff_hz or float(cutoff_hz[0]), self.sample_rate)[1],
             "cfm": cfm,
             "visqol": None,
+            "bands": M.band_db(est, hq, self.sample_rate),
         }
         t2 = time.time()
         if self.mem_log:
@@ -380,11 +421,24 @@ class UniverSRSystem(pl.LightningModule):
         self.log("visqol", float(visqol) if visqol is not None else -1.0, logger=True)
         self.log("lsd_high", float(lsd_high) if lsd_high is not None else 0.0, logger=True)
         self.log("val_cfm", float(cfm) if cfm is not None else 0.0, logger=True)
+        bands = []
+        for i in range(len(M.BAND_LABELS)):
+            vals = [r["bands"][i] for r in self._val_rows if not math.isnan(r["bands"][i])]
+            bands.append(sum(vals) / len(vals) if vals else None)
+            if bands[-1] is not None:
+                self.log(f"band_db_{i}", float(bands[-1]), logger=True)
+        base = self._baseline or {}
+        parts = [f"{lab}={v:+.1f}" + (f" (base {base[f'band_db_{i}']:+.1f})" if f"band_db_{i}" in base else "")
+                 for i, (lab, v) in enumerate(zip(M.BAND_LABELS, bands)) if v is not None]
+        if parts:
+            print(f"\n[bands] restored minus HQ, dB:  {'  '.join(parts)}  (alpha {self.current_alpha():.3f})", flush=True)
         if self.optimizer is not None:
             self.log("lr", self.optimizer.param_groups[0]["lr"], prog_bar=True)
         log.info("val: %d clips, songs=%s", len(self._val_rows), getattr(self, "_active_songs", []))
 
     def on_save_checkpoint(self, checkpoint):
+        checkpoint["alpha"] = float(self.current_alpha())
+        checkpoint["alpha_origin"] = self._alpha_origin
         checkpoint["val_song_keys"] = [k for k, _ in self._val_all_songs]
         checkpoint["val_window_idx"] = self._val_window_idx
         checkpoint["val_next_rotate"] = self._val_next_rotate
@@ -393,6 +447,7 @@ class UniverSRSystem(pl.LightningModule):
             checkpoint["ema"] = {n: v.detach().cpu() for n, v in self._ema.items()}
 
     def on_load_checkpoint(self, checkpoint):
+        self._alpha_origin = checkpoint.get("alpha_origin")
         self._val_saved_keys = checkpoint.get("val_song_keys")
         self._val_window_idx = checkpoint.get("val_window_idx", 0)
         self._val_next_rotate = checkpoint.get("val_next_rotate", -1)

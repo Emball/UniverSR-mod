@@ -89,7 +89,7 @@ def export_model(ckpt_path: str, out_path: str, model, model_cfg: dict, transfor
     bundle = {
         "model_state_dict": state,
         "model_cfg": dict(model_cfg),
-        "transform_cfg": dict(transform_cfg),
+        "transform_cfg": {**dict(transform_cfg), **({"alpha": float(ckpt["alpha"])} if ckpt.get("alpha") is not None else {})},
         "gen_start_bin": int(model.gen_start_bin),
         "aligned_input": bool(model.aligned_input),
         "bw_anchor_bins": [int(b) for b in model.bw_anchor_bins],

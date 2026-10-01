@@ -37,7 +37,8 @@ MODELS_DIR = os.path.join(REPO_ROOT, "models")
 PRETRAINED_NAMES = ("pytorch_model.bin", "universr.bin", "universr.pth", "universr.ckpt")
 HF_REPO = "woongzip1/universr-audio"
 SYSTEM_KEYS = {"sigma_min", "band_weights", "val_ode_steps", "val_guidance", "val_chunk_sec", "val_seed", "mem_log", "mem_log_every",
-               "visqol_fraction", "keep_lq_below_cutoff", "lsd_cutoff_hz"}
+               "visqol_fraction", "keep_lq_below_cutoff", "lsd_cutoff_hz", "t_skew", "aux_logmag_weight", "alpha_start",
+               "alpha_anneal_steps"}
 
 
 def setup_logging():
@@ -161,7 +162,7 @@ def run_baseline(trainer, system, datamodule, key):
                 os.makedirs(cache_dir, exist_ok=True)
                 with open(cache_file, "w") as f:
                     json.dump(bl, f, indent=2)
-    system._baseline = {k: float(bl[k]) for k in ("visqol", "sisdr", "hfnr", "lsd_high") if bl.get(k) is not None}
+    system._baseline = {k: float(bl[k]) for k in ("visqol", "sisdr", "hfnr", "lsd_high", "band_db_0", "band_db_1", "band_db_2", "band_db_3") if bl.get(k) is not None}
     system._last_val_sisdr = bl.get("sisdr")
     system._last_val_hfnr = bl.get("hfnr")
     system._last_val_visqol = bl.get("visqol")
