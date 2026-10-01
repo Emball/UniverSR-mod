@@ -3,7 +3,7 @@ inference.py -- UniverSR-mod restoration
 
 Usage:
     # Best ranked checkpoint of the experiment in a config
-    python core/inference.py --in_wav in.wav --out_wav out.wav --conf_dir configs/universr_stfl2.yaml
+    python core/inference.py --in_wav in.wav --out_wav out.wav --conf_dir configs/itunes_mp3.yaml
 
     # Explicit weights: Lightning .ckpt (needs --conf_dir), exported best_model.pth, or pretrained .bin
     python core/inference.py --in_wav in.wav --out_wav out.wav --weights runs/x/ts/best_model.pth

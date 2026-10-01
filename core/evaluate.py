@@ -2,7 +2,7 @@
 evaluate.py -- offline checkpoint evaluator for UniverSR-mod.
 
 Launched from the TUI, or standalone:
-    python core/evaluate.py --conf_dir configs/universr_stfl2.yaml [--visqol] [--baseline]
+    python core/evaluate.py --conf_dir configs/itunes_mp3.yaml [--visqol] [--baseline]
 
 Every checkpoint is run on the same fixed set of validation clips (equal share per song), so the
 numbers are comparable across checkpoints, unlike the rotating-window values in checkpoint filenames.

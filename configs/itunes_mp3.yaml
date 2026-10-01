@@ -1,16 +1,26 @@
-# UniverSR-mod: MP3 restoration finetune at native 44.1 kHz, tuned for RTX 2080 Ti 11 GB / 16 GB RAM.
-# Mapped from Apollo-mod's apollo_stfl2.yaml. 44.1 kHz STFT: n_fft 960, hop 480, 480 bins to 22.05 kHz. Data goes in data/universr_stfl2/{train,val}/{LQ,HQ}.
-# Arms: this file is arm C (aligned channels). For arm B set model.aligned_input: false.
-# Arm A (zero-shot) is the baseline pass that train.py runs before step 0 and caches.
+# UniverSR-mod: iTunes MP3 restoration finetune at native 44.1 kHz, tuned for RTX 2080 Ti 11 GB / 16 GB RAM.
+# Data goes in data/itunes_mp3/{train,val}/{LQ,HQ}. Arm C (aligned channels); set model.aligned_input: false for arm B.
+# Arm A (zero-shot) is the baseline pass that train.py runs before step 0.
+#
+# How this config adapts the model to codec damage (each is a key below, none needs code changes):
+#   datas.cutoff_hz 24000        the whole LQ spectrum is valid input, including the isolated spikes above the lowpass
+#   model.aligned_input true     the degraded spectrum is shown bin by bin, so damaged bins inside the LQ band can be repaired
+#   model.gen_start_bin 80       bins below ~3.7 kHz are copied from the LQ; 0 would regenerate them too
+#   transform n_fft/hop/sr       960 / 480 / 44100 with 480 bins: native rate, bin spacing within 2% of the pretrained model
+#   transform.alpha 0.1          harder amplitude compression, so quiet bins count for more in the loss (pretrained: 0.2)
+#   system.alpha_start/steps     slides alpha from the checkpoint's 0.2 to 0.1 over 3000 steps instead of switching at once
+#   system.t_skew 1.5            more training on the clean end of the flow, where fine noise-like detail is learned
+#   system.val_guidance 1.0      plain conditional prediction; 1.5 (upstream) exaggerated the LQ's influence on level
+#   optimizer.lr_mult            3x learning rate on the new aligned channels and the bandwidth embedding
 
 exp:
   dir: ./runs
-  name: universr_stfl2
+  name: itunes_mp3
 
 resume: true
 seed: 42
 # Start weights: set to a Lightning checkpoint from the 48 kHz run (EMA weights are loaded, the optimizer starts fresh),
-# e.g. runs/universr_stfl2/<timestamp>/checkpoints/step=....ckpt. null = models/pytorch_model.bin. Ignored when resuming this run.
+# e.g. runs/<name>/<timestamp>/checkpoints/step=....ckpt. null = models/pytorch_model.bin. Ignored when resuming this run.
 weights_path: null
 
 optimizations:
@@ -135,6 +145,6 @@ system:
   keep_lq_below_cutoff: auto   # auto: keep real bins below the cutoff in arm B, regenerate them in arm C
   lsd_cutoff_hz: 16000     # LSD is measured above this frequency (the model cutoff is full band, so it can't define the region)
   t_skew: 1.5              # flow time t = 1-(1-u)^p, u uniform; p > 1 spends more training on the clean end (fine detail), 1 = uniform
-  aux_logmag_weight: 0.0      # weight of a log-magnitude loss on the one-step clean estimate, equal across frequency; 0 = off
+  aux_logmag_weight: 0.0   # weight of a log-magnitude loss on the one-step clean estimate; 0 = off. At 0.1 the restored high band came out ~19 dB above HQ in testing
   alpha_start: 0.2           # compression exponent the anneal starts from (the checkpoint's); null = no anneal
   alpha_anneal_steps: 3000    # steps to slide from alpha_start to transform.alpha, counted from the step a run starts or resumes at

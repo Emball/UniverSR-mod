@@ -31,7 +31,7 @@ This fork reworks it for fine-tuning on your own LQ/HQ pairs, with the same inte
 **Model**
 - Optional aligned input channels (arm C) give the network the degraded spectrum bin by bin, so it can repair bins inside the LQ band as well as extend it. Arm B keeps upstream's input. Both start from the released weights and produce the same output as the released model at step 0.
 - The first generated bin is configurable.
-- The sample rate, STFT size and bin count are configurable, so files can be trained at their native rate. `configs/universr_stfl2.yaml` uses a 960-point STFT with 480 bins for 44.1 kHz.
+- The sample rate, STFT size and bin count are configurable, so files can be trained at their native rate. `configs/itunes_mp3.yaml` uses a 960-point STFT with 480 bins for 44.1 kHz.
 
 **Training**
 - fp16 on GPUs before Ampere, bf16 on Ampere and newer.
@@ -40,6 +40,8 @@ This fork reworks it for fine-tuning on your own LQ/HQ pairs, with the same inte
 - Resume is by step. Upstream resumed by epoch.
 - Ctrl+C saves a checkpoint. Creating a `PAUSED` file in the run folder suspends training.
 - Validation runs on locked clips and reports ViSQOL, SI-SDR, HFNR and LSD. A baseline pass on the pretrained weights runs before step 0.
+- Validation also prints the mean level difference, restored minus HQ, in four bands (3.75 to 8, 8 to 12, 12 to 16 and 16 to 22 kHz), with the baseline beside each value.
+- Loss and sampling options: compression exponent anneal, flow time skew and an optional log-magnitude term. See Adapting to a Codec.
 - The best checkpoint is ranked by ViSQOL, then SI-SDR, then HFNR. Upstream selects by flow-matching loss.
 
 **Tools**
@@ -88,10 +90,10 @@ To use a different set of weights for a run, set `weights_path` in the config or
 
 ## 📁 Prepare Your Data
 
-Place your audio under `data/<name>/`, where `<name>` matches `exp.name` in your config (for example `configs/universr_stfl2.yaml` uses `data/universr_stfl2/`).
+Place your audio under `data/<name>/`, where `<name>` matches `exp.name` in your config (for example `configs/itunes_mp3.yaml` uses `data/itunes_mp3/`).
 
 ```
-data/universr_stfl2/
+data/itunes_mp3/
   train/
     LQ/    degraded audio (filenames must match HQ)
     HQ/    clean reference audio
@@ -134,7 +136,7 @@ Run `universr.bat` (Windows) or `./universr.sh` (Linux / macOS) to open the TUI.
 To run directly:
 
 ```bash
-universr.bat train --conf_dir configs/universr_stfl2.yaml
+universr.bat train --conf_dir configs/itunes_mp3.yaml
 ```
 
 Add `--resume` to continue the newest run, or set `resume: true` in the config. On resume, the config's `optimizer.lr` replaces the learning rate stored in the checkpoint, and the checkpoint is validated once before training continues.
@@ -180,7 +182,7 @@ The best checkpoint is the one with the highest ViSQOL, ties broken by SI-SDR, t
 Open the TUI and select **Inference** to pick a config, model and input file. The TUI remembers your last settings per config. Batch processing runs all files in an input folder in sequence.
 
 ```bash
-universr.bat inference --in_wav input.wav --out_wav output.wav --conf_dir configs/universr_stfl2.yaml
+universr.bat inference --in_wav input.wav --out_wav output.wav --conf_dir configs/itunes_mp3.yaml
 ```
 
 Output is a 32-bit float WAV at the model's sample rate. Stereo files are restored one channel at a time. Long files are processed in overlapping chunks.
@@ -239,7 +241,7 @@ Each band also has a `weight` (0 to 1) that blends between the mode result and t
 ## 📊 Evaluation
 
 ```bash
-universr.bat evaluate --conf_dir configs/universr_stfl2.yaml --baseline
+universr.bat evaluate --conf_dir configs/itunes_mp3.yaml --baseline
 ```
 
 Every checkpoint in the experiment is scored on the same fixed set of validation clips, so the table is comparable across checkpoints. It ignores the rotating-window numbers in checkpoint names. Results are cached per checkpoint and settings. Checkpoints are ranked by a composite score weighted ViSQOL 0.60, HFNR 0.25, SI-SDR 0.15.
@@ -272,9 +274,34 @@ Available from **Utilities** in the TUI.
 
 ---
 
+## 🎛️ Adapting to a Codec
+
+The released model extends band-limited audio. Codec damage is different: it is spread across the whole spectrum, and some content above the lowpass survives as isolated spikes. The keys below change what the network is shown and what it is asked to generate. All of them are config values. The right column lists what `configs/itunes_mp3.yaml` sets for iTunes MP3 files, and is that config's choice for that codec.
+
+| Key | What it does | `itunes_mp3.yaml` |
+|---|---|---|
+| `datas.cutoff_hz` | Marks which LQ bins are valid input. A value at or above Nyquist marks the whole LQ spectrum valid, including content above the lowpass. A value in Hz, a `[min, max]` range or `auto` marks everything above it as empty. | `24000` |
+| `model.aligned_input` | Shows the network the degraded spectrum bin by bin, plus a validity mask, through extra input channels that start at zero. Without it the network only sees a per-frame summary of the LQ, which cannot describe damage at specific bins. | `true` |
+| `model.gen_start_bin` | First bin the network generates. Bins below it are copied from the LQ. `80` matches the released model. `0` also regenerates the lowest bins. | `80` (about 3.7 kHz) |
+| `transform.sampling_rate`, `n_fft`, `hop_length`, `model.total_freq_bins` | Sets the STFT. The released weights use 48 kHz, 1024, 512 and 512 bins. Native rates work by choosing a bin spacing near the pretrained 46.9 Hz and `hop_length` equal to half of `n_fft`. `total_freq_bins - gen_start_bin` must be a multiple of 16. | `44100`, `960`, `480`, `480` |
+| `datas.crop_samples` | Training crop length. 64 STFT frames matches the released model. | `30719` |
+| `transform.alpha` | Amplitude compression exponent. Lower values compress harder, so quiet bins weigh more in the loss. The released weights use `0.2`. Changing it changes the values the network sees and emits. | `0.1` |
+| `system.alpha_start`, `alpha_anneal_steps` | Slides the exponent from `alpha_start` to `transform.alpha` over this many steps, counted from the step a run starts or resumes at. `null` or `0` switches off the slide. Resume from a checkpoint trained at `alpha_start`. | `0.2`, `3000` |
+| `system.t_skew` | Flow time is sampled as `1 - (1 - u)^p` for uniform `u`. Values above `1` spend more training on the clean end, where fine detail is learned. `1` is uniform. | `1.5` |
+| `system.aux_logmag_weight` | Weight of an extra log-magnitude loss on the one-step clean estimate, equal across frequency. `0` is off. | `0.0` |
+| `system.val_guidance` | Guidance scale for validation and inference. `1.0` is the plain conditional prediction. Higher values exaggerate the influence of the LQ, which raises output level. | `1.0` |
+| `optimizer.lr`, `optimizer.lr_mult` | Base rate and per-prefix multipliers. The aligned channels (`init_conv.`) and the bandwidth embedding (`bw_embedder.`) are new, so they take a higher rate. | `3e-5`, `3.0` on both prefixes |
+| `training.freeze` | Name prefixes to hold fixed. | `[]` |
+| `model.fp32_modules` | Submodules that run in full precision under mixed precision. The released weights overflow fp16 in these. | `encoders.3.blocks`, `midcoder` |
+| `system.lsd_cutoff_hz` | LSD is measured above this frequency. Needed when `datas.cutoff_hz` is full band. | `16000` |
+
+Changing `transform.sampling_rate`, `n_fft`, `hop_length` or `total_freq_bins` starts a new run. A run folder trained with a different bin count cannot be resumed. To carry learning over, set `weights_path` to a previous `.ckpt`.
+
+---
+
 ## 📖 Config Reference
 
-Experiment configs live in `configs/`. `configs/universr_stfl2.yaml` and `configs/universr_stfl_new.yaml` are included. `configs/universr_pretrained.yaml` is the reference config for the released weights and is not an experiment. Copy and rename a config for each run.
+Experiment configs live in `configs/`. `configs/itunes_mp3.yaml` and `configs/universr_stfl_new.yaml` are included. `configs/universr_pretrained.yaml` is the reference config for the released weights and is not an experiment. Copy and rename a config for each run.
 
 ### exp and top level
 
@@ -361,7 +388,7 @@ Experiment configs live in `configs/`. `configs/universr_stfl2.yaml` and `config
 
 ### transform
 
-STFT settings: `window_fn`, `n_fft`, `sampling_rate`, `hop_length`, `alpha`, `beta`, `comp_eps`. The pretrained weights use `n_fft` 1024 and `hop_length` 512 at 48 kHz. Other values load from them and adapt during fine-tuning.
+STFT settings: `window_fn`, `n_fft`, `sampling_rate`, `hop_length`, `alpha` (compression exponent), `beta`, `comp_eps`. The pretrained weights use `n_fft` 1024 and `hop_length` 512 at 48 kHz. Other values load from them and adapt during fine-tuning.
 
 ### optimizer and scheduler
 
@@ -390,6 +417,10 @@ STFT settings: `window_fn`, `n_fft`, `sampling_rate`, `hop_length`, `alpha`, `be
 | `keep_lq_below_cutoff` | `true` copies real LQ bins below the cutoff into the output. `false` generates them. `auto` is `true` for arm B and `false` for arm C. |
 | `lsd_cutoff_hz` | LSD is measured above this frequency. |
 | `band_weights` | Optional loss weighting by frequency. Entries are `{lo_hz, hi_hz, weight}` (later entries override) or `{shape: gaussian, center_hz, sigma_hz, gain}` (adds a bump). Unset gives a uniform loss. |
+| `t_skew` | Flow time exponent `p`. `1` is uniform, above `1` favours the clean end. |
+| `aux_logmag_weight` | Weight of the log-magnitude loss term. `0` is off. |
+| `alpha_start` | Compression exponent the anneal starts from. `null` disables the anneal. |
+| `alpha_anneal_steps` | Steps to slide from `alpha_start` to `transform.alpha`. |
 | `mem_log` | Prints `[mem]` lines with VRAM and RAM use at training and validation points. |
 | `mem_log_every` | Optimizer steps between `[mem]` lines during training. `0` disables them. |
 
