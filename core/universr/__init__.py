@@ -1,4 +1,5 @@
-from universr.inference import UniverSR
-
-__version__ = "0.1.5"
-__all__ = ["UniverSR"]
+def __getattr__(name):
+    if name == "UniverSR":
+        from universr.inference import UniverSR
+        return UniverSR
+    raise AttributeError(name)
