@@ -111,6 +111,7 @@ def baseline_key(weights_path, eval_dir, model, system, cfg):
         "gen_start": int(model.gen_start_bin), "aligned": bool(model.aligned_input), "anchors": list(model.bw_anchor_bins),
         "keep_lq": bool(system.keep_lq), "songs": system.val_songs, "steps": system.val_ode_steps,
         "guidance": system.val_guidance, "seed": system.val_seed, "visqol_fraction": system.visqol_fraction,
+        "schema": 2, "chunk": system.val_chunk_sec, "fp32": sum(1 for m in model.modules() if getattr(type(m), "_fp32", False)),
         "sr": int(cfg.datas.sr), "cutoff": OmegaConf.to_container(cfg.datas, resolve=True).get("cutoff_hz", "auto"),
     }
     return hashlib.md5(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
@@ -137,9 +138,12 @@ def run_baseline(trainer, system, datamodule, key):
         if not res:
             return
         bl = {k: float(v) for k, v in res[0].items() if v is not None}
-        os.makedirs(cache_dir, exist_ok=True)
-        with open(cache_file, "w") as f:
-            json.dump(bl, f, indent=2)
+        if bl.get("visqol", -1.0) <= -1.0 and bl.get("sisdr", -100.0) <= -100.0:
+            log.warning("[baseline] no valid metrics (restored audio non-finite or empty) -- not cached")
+        else:
+            os.makedirs(cache_dir, exist_ok=True)
+            with open(cache_file, "w") as f:
+                json.dump(bl, f, indent=2)
     system._last_val_sisdr = bl.get("sisdr")
     system._last_val_hfnr = bl.get("hfnr")
     system._last_val_visqol = bl.get("visqol")
