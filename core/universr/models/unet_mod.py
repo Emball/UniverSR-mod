@@ -29,6 +29,19 @@ def hz_to_bins(hz, sample_rate, n_fft):
     return hz * n_fft / sample_rate
 
 
+def force_fp32(module):
+    """Run a module with autocast off and floating inputs cast to fp32 (guards fp16 overflow)."""
+    fwd = module.forward
+
+    def wrapped(*args, **kwargs):
+        dev = next((a.device.type for a in args if torch.is_tensor(a)), "cuda")
+        args = tuple(a.float() if torch.is_tensor(a) and a.is_floating_point() else a for a in args)
+        with torch.autocast(device_type=dev, enabled=False):
+            return fwd(*args, **kwargs)
+
+    module.forward = wrapped
+
+
 def _run(module, ckpt, *args):
     if ckpt and torch.is_grad_enabled():
         return checkpoint(module, *args, use_reentrant=False)
@@ -92,7 +105,8 @@ class MaskedConditioningEncoder(ConditioningEncoder2D):
         z = z * mask
         for blk in self.blocks:
             z = _run(blk, self.ckpt, z) * mask
-        return z.sum(dim=2) / mask.sum(dim=2).clamp_min(1.0)
+        zf = z.float()
+        return (zf.sum(dim=2) / mask.float().sum(dim=2).clamp_min(1.0)).to(z.dtype)
 
 
 class ConvNeXtUNetCondMod(ConditionalVectorFieldModel):
@@ -102,7 +116,8 @@ class ConvNeXtUNetCondMod(ConditionalVectorFieldModel):
                  total_freq_bins=512, gen_start_bin=80,
                  feature_enc_layers=10, cond_dropout_prob=0.1,
                  bw_anchor_bins=PRETRAINED_ANCHOR_BINS,
-                 aligned_input=False, grad_checkpoint=False, fast_ops=True, channels_last=False):
+                 aligned_input=False, grad_checkpoint=False, fast_ops=True, channels_last=False,
+                 fp32_modules=()):
         super().__init__()
         dims, depths = list(dims), list(depths)
         self.strides = 2 ** len(dims)
@@ -153,6 +168,9 @@ class ConvNeXtUNetCondMod(ConditionalVectorFieldModel):
                     m.__class__ = FastLayerNorm
         if self.channels_last:
             self.to(memory_format=torch.channels_last)
+        for name in (fp32_modules or ()):
+            force_fp32(self.get_submodule(str(name)))
+            log.info("fp32 module: %s", name)
         log.info("model built: gen_bins=%d (start %d) anchors=%s aligned=%s ckpt=%s params=%.2fM",
                  self.hr_freq_bins, gen_start_bin, self.bw_anchor_bins, aligned_input,
                  grad_checkpoint, sum(p.numel() for p in self.parameters()) / 1e6)
