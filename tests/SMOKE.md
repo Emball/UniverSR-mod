@@ -1,6 +1,6 @@
 # Smoke tests (run on the GPU machine)
 
-Nothing below has been executed on real hardware. Run in order; stop at the first failure and report the log.
+Run on the 2080 Ti so far: setup and the TUI, chunking, the baseline pass, fp16 training and validation (steps 1 and 4 in part). Everything else has not been executed. Run in order; stop at the first failure and report the log.
 Config below: `configs/universr_stfl2.yaml` (or `universr_stfl_new.yaml`). Data goes in `data/<exp.name>/{train,val}/{LQ,HQ}`.
 
 1. **Setup.** Put `pytorch_model.bin` and `config.yaml` from `woongzip1/universr-audio` in `models/`. Run `universr.bat` (or `./universr.sh`): the TUI opens with the UniverSR-mod banner and lists the experiment configs, not `universr_pretrained`.
@@ -14,7 +14,7 @@ Config below: `configs/universr_stfl2.yaml` (or `universr_stfl_new.yaml`). Data 
    - peak VRAM at `batch_size: 8` with `grad_checkpoint: true` (`nvidia-smi`); on OOM try batch 4, or `grad_accum_steps: 2`
    - speed with `grad_checkpoint: false` if VRAM has headroom
 5. **Ctrl+C and resume.** Start training, Ctrl+C after a few steps: a `step=N.ckpt` is saved. Rerun with `--resume`: continues from step N, not from 0 (this is the upstream bug the fork fixes). Create `runs/<name>/PAUSED` mid-run: training suspends; delete it: continues.
-6. **Freeze setting.** The `[freeze]` log line should report the pretrained backbone frozen and a small trainable share. If loss does not move after a few hundred steps, switch `freeze` to the commented alternative in the config.
+6. **Freeze setting.** The shipped configs set `freeze: []`. With a prefix list set, the `[freeze]` log line reports the frozen share of parameters.
 7. **Evaluate.** `universr.bat evaluate --conf_dir configs/universr_stfl_new.yaml --baseline`: a table with the zero-shot baseline row and each checkpoint on the same clips.
 8. **Inference from the TUI.** Run restoration with a `.ckpt` and with `best_model.pth`, including the new options menu (fixed cutoff, match input rate) and one ensemble preset. Mid-training inference (Ctrl+I) should also run.
 9. **Optional.** `optimizer.type: adamw_8bit` and `gefen`, to see that they start and step.
