@@ -1,11 +1,12 @@
 import logging
 import random
+from fractions import Fraction
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Tuple
 
 import numpy as np
 import torch
-import torchaudio
+from audio_io import resample
 
 log = logging.getLogger(__name__)
 
@@ -209,16 +210,11 @@ def _check_ffmpeg() -> bool:
     return _ffmpeg_ok
 
 
-def pitch_shift_tensor(wav: torch.Tensor, semitones: float, sr: int) -> torch.Tensor:
-    n = wav.shape[-1]
-    virtual_sr = int(round(sr * 2 ** (semitones / 12)))
-    wav = torchaudio.functional.resample(wav, sr, virtual_sr)
-    wav = torchaudio.functional.resample(wav, virtual_sr, sr)
-    if wav.shape[-1] >= n:
-        wav = wav[:, :n]
-    else:
-        wav = torch.nn.functional.pad(wav, (0, n - wav.shape[-1]))
-    return wav.float()
+def pitch_shift_tensor(wav: torch.Tensor, semitones: float) -> torch.Tensor:
+    # resample-based pitch+speed change; small rational ratio keeps the kernel tiny.
+    # Output length scales by 1/factor; callers crop, so no padding here.
+    frac = Fraction(2 ** (semitones / 12)).limit_denominator(64)
+    return resample(wav, frac.numerator, frac.denominator).float()
 
 
 def mp3_degrade_tensor(wav: torch.Tensor, kbps: int, sr: int) -> torch.Tensor:
@@ -330,8 +326,8 @@ def augment_pair(
 
     if cfg.pitch_shift.enabled and random.random() < cfg.pitch_shift.prob:
         semis = random.uniform(-cfg.pitch_shift.semitones_max, cfg.pitch_shift.semitones_max)
-        lq = pitch_shift_tensor(lq, semis, sr)
-        hq = pitch_shift_tensor(hq, semis, sr)
+        lq = pitch_shift_tensor(lq, semis)
+        hq = pitch_shift_tensor(hq, semis)
 
     if cfg.noise.enabled and random.random() < cfg.noise.prob:
         noise = torch.randn_like(hq) * cfg.noise.sigma
