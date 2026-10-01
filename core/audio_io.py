@@ -87,7 +87,15 @@ def load_audio(path: str, sr: int, cache_dir: str, trim_samples: int = 0) -> tor
 
 
 def save_wav_f32(tensor: torch.Tensor, path: str, sr: int) -> None:
-    torchaudio.save(path, tensor.float().cpu(), sr, encoding="PCM_F", bits_per_sample=32)
+    data = tensor.float().cpu()
+    if data.ndim == 1:
+        data = data.unsqueeze(0)
+    try:
+        import soundfile as sf
+        sf.write(path, data.numpy().T, sr, subtype="FLOAT")
+    except ImportError:
+        log.warning("soundfile missing, falling back to torchaudio.save")
+        torchaudio.save(path, data, sr, encoding="PCM_F", bits_per_sample=32)
 
 
 def peak_normalize_pair(lq: torch.Tensor, hq: torch.Tensor, target_dbfs: float):
