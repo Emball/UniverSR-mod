@@ -217,33 +217,46 @@ def pitch_shift_tensor(wav: torch.Tensor, semitones: float) -> torch.Tensor:
     return resample(wav, frac.numerator, frac.denominator).float()
 
 
+def estimate_delay(ref: torch.Tensor, dec: torch.Tensor, sr: int, max_lag: int = 4096,
+                   fallback: int = 1105) -> int:
+    """Delay of dec relative to ref in samples via band-limited phase correlation."""
+    n = min(ref.shape[-1], dec.shape[-1], sr * 4)
+    x = ref[..., :n].float().mean(dim=0)
+    y = dec[..., :n].float().mean(dim=0)
+    if x.pow(2).mean() < 1e-10 or y.pow(2).mean() < 1e-10:
+        return fallback
+    nfft = 1 << (2 * n - 1).bit_length()
+    X, Y = torch.fft.rfft(x, nfft), torch.fft.rfft(y, nfft)
+    cross = Y * X.conj()
+    freqs = torch.fft.rfftfreq(nfft, 1.0 / sr)
+    band = ((freqs > 100) & (freqs < 8000)).float()
+    cc = torch.fft.irfft(cross / (cross.abs() + 1e-8) * band, nfft)
+    window = cc[:max_lag + 1]
+    lag = int(window.argmax().item())
+    if window[lag] < 5 * window.abs().median():
+        return fallback
+    return lag
+
+
 def mp3_degrade_tensor(wav: torch.Tensor, kbps: int, sr: int) -> torch.Tensor:
     import ffmpeg
 
     n = wav.shape[-1]
     ch = wav.shape[0]
-
-    def encode_decode(t):
-        pcm = t.numpy().T.astype(np.float32).tobytes()
-        mp3, _ = (
-            ffmpeg.input("pipe:", format="f32le", ar=sr, ac=ch)
-            .output("pipe:", format="mp3", audio_bitrate=f"{kbps}k", codec="libmp3lame")
-            .run(input=pcm, capture_stdout=True, capture_stderr=True, quiet=True)
-        )
-        out, _ = (
-            ffmpeg.input("pipe:", format="mp3")
-            .output("pipe:", format="f32le", ar=sr, ac=ch)
-            .run(input=mp3, capture_stdout=True, capture_stderr=True, quiet=True)
-        )
-        return torch.from_numpy(np.frombuffer(out, dtype=np.float32).reshape(-1, ch).T.copy())
-
-    probe_len = 2048
-    impulse = torch.zeros(ch, probe_len)
-    impulse[:, 0] = 1.0
-    probed = encode_decode(torch.cat([impulse, wav.float()], dim=-1))
-    delay = int(probed[0, :probe_len * 2].abs().argmax().item())
-
-    dec = encode_decode(wav.float())[:, delay:]
+    wav = wav.float()
+    pcm = wav.numpy().T.astype(np.float32).tobytes()
+    mp3, _ = (
+        ffmpeg.input("pipe:", format="f32le", ar=sr, ac=ch)
+        .output("pipe:", format="mp3", audio_bitrate=f"{kbps}k", codec="libmp3lame")
+        .run(input=pcm, capture_stdout=True, capture_stderr=True, quiet=True)
+    )
+    out, _ = (
+        ffmpeg.input("pipe:", format="mp3")
+        .output("pipe:", format="f32le", ar=sr, ac=ch)
+        .run(input=mp3, capture_stdout=True, capture_stderr=True, quiet=True)
+    )
+    dec = torch.from_numpy(np.frombuffer(out, dtype=np.float32).reshape(-1, ch).T.copy())
+    dec = dec[:, estimate_delay(wav, dec, sr):]
     if dec.shape[-1] >= n:
         dec = dec[:, :n]
     else:

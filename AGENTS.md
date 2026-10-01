@@ -36,7 +36,7 @@ Fork of woongzip1/UniverSR (MIT, ICASSP 2026): trainable and finetunable on cons
 ## Phases
 0. Fork, AGENTS.md, VERSION.
 1. Restructure to Apollo layout (`core/`, `utils/`, `configs/`, `models/`, `runs/`); port TUI, degrade/align tools, launchers; remove upstream-only entry points. Done: upstream train/evaluate/dataset kept in `core/_upstream/` as reference until phases 2-5 replace them; TUI is a verbatim copy pending phase 8 deltas.
-2. Data: port paired datamodule and chunk/val-clip prep at 48 kHz; mono crops; level handling; augmentations (live + cached).
+2. Data: port paired datamodule and chunk/val-clip prep at 48 kHz; mono crops; level handling; augmentations (live + cached). Done: `core/{audio_io,augment,cutoff,data_prep,paired_datamodule}.py`. Cache keys include sample rate and alignment. Delays (`align_data`) are in samples of the file being trimmed, applied before resampling. All resampling goes through `audio_io.resample`. Per-sample cutoff comes from `datas.cutoff_hz` (`auto` | Hz | [min,max]); `auto` detects the spectral drop on the augmented LQ, so live `noise` augmentation defeats it.
 3. Backend: cutoff-aware conditioning, aligned channels, region config, pretrained loader with shape reconciliation; CPU step-0 equivalence test against original U-Net.
 4. LightningModule: flow-matching step (fp32 STFT, AMP), band weights, accumulation, clipping, block checkpointing, ODE validation with locking/rotation, baseline cache.
 5. `train.py` port: run isolation, StepPrinter, PAUSED, Ctrl+C save, optimizer factory, precision auto, weights lookup, resume.
