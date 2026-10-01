@@ -104,14 +104,30 @@ def file_md5(path):
     return h.hexdigest()
 
 
+def code_hash():
+    h = hashlib.md5()
+    root = os.path.dirname(os.path.abspath(__file__))
+    for dp, dn, fn in os.walk(root):
+        dn[:] = sorted(d for d in dn if d not in ("__pycache__", "_upstream", "tests"))
+        for f in sorted(fn):
+            if f.endswith(".py"):
+                with open(os.path.join(dp, f), "rb") as fh:
+                    h.update(f.encode() + fh.read())
+    return h.hexdigest()
+
+
 def baseline_key(weights_path, eval_dir, model, system, cfg):
+    full = OmegaConf.to_container(cfg, resolve=True)
+    sysc = {k: v for k, v in (full.get("system") or {}).items() if k not in ("mem_log", "mem_log_every")}
     payload = {
+        "code": code_hash(),
+        "cfg": {"model": full.get("model"), "transform": full.get("transform"), "system": sysc, "datas": full.get("datas")},
         "weights": file_md5(weights_path) if weights_path and os.path.isfile(weights_path) else "",
         "val_key": os.path.basename(os.path.dirname(os.path.normpath(eval_dir))),
         "gen_start": int(model.gen_start_bin), "aligned": bool(model.aligned_input), "anchors": list(model.bw_anchor_bins),
         "keep_lq": bool(system.keep_lq), "songs": system.val_songs, "steps": system.val_ode_steps,
         "guidance": system.val_guidance, "seed": system.val_seed, "visqol_fraction": system.visqol_fraction,
-        "schema": 2, "chunk": system.val_chunk_sec, "fp32": sum(1 for m in model.modules() if getattr(type(m), "_fp32", False)),
+        "schema": 3, "chunk": system.val_chunk_sec, "fp32": sum(1 for m in model.modules() if getattr(type(m), "_fp32", False)),
         "sr": int(cfg.datas.sr), "cutoff": OmegaConf.to_container(cfg.datas, resolve=True).get("cutoff_hz", "auto"),
     }
     return hashlib.md5(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
@@ -145,6 +161,7 @@ def run_baseline(trainer, system, datamodule, key):
                 os.makedirs(cache_dir, exist_ok=True)
                 with open(cache_file, "w") as f:
                     json.dump(bl, f, indent=2)
+    system._baseline = {k: float(bl[k]) for k in ("visqol", "sisdr", "hfnr", "lsd_high") if bl.get(k) is not None}
     system._last_val_sisdr = bl.get("sisdr")
     system._last_val_hfnr = bl.get("hfnr")
     system._last_val_visqol = bl.get("visqol")
@@ -196,11 +213,13 @@ class StepPrinter(Callback):
 
     def _vals(self, m):
         parts = []
-        for key, attr, fmt in (("visqol", "_last_val_visqol", "{:.3f}"), ("sisdr", "_last_val_sisdr", "{:.3f}"),
-                               ("hfnr", "_last_val_hfnr", "{:.3f}"), ("lsd", "_last_val_lsd", "{:.3f}")):
+        base = getattr(m, "_baseline", None) or {}
+        for key, attr, bkey in (("visqol", "_last_val_visqol", "visqol"), ("sisdr", "_last_val_sisdr", "sisdr"),
+                                ("hfnr", "_last_val_hfnr", "hfnr"), ("lsd", "_last_val_lsd", "lsd_high")):
             v = getattr(m, attr, None)
             if v is not None:
-                parts.append(f"{key}=" + fmt.format(float(v)))
+                b = f" (base {base[bkey]:.3f})" if bkey in base else ""
+                parts.append(f"{key}={float(v):.3f}{b}")
         return ("  " + "  ".join(parts)) if parts else ""
 
     def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
@@ -409,9 +428,13 @@ def train(cfg: DictConfig):
         callbacks=callbacks, logger=logger, enable_progress_bar=False, enable_model_summary=False,
         default_root_dir=run_dir, log_every_n_steps=int(tr.get("log_every_n_steps", 10)))
 
-    if ckpt_path is None and not val_disabled:
+    if not val_disabled:
         try:
-            run_baseline(trainer, system, datamodule, baseline_key(weights, cfg.datas.eval_dir, model, system, cfg))
+            bl_weights = weights
+            if ckpt_path is not None:
+                bl_weights = resolve_weights(cfg)
+                load_weights(model, bl_weights)
+            run_baseline(trainer, system, datamodule, baseline_key(bl_weights, cfg.datas.eval_dir, model, system, cfg))
         except Exception as e:
             log.warning("[baseline] skipped: %s", e)
     if ckpt_path is not None:
