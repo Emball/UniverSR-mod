@@ -242,6 +242,8 @@ class UniverSRSystem(pl.LightningModule):
         if hq.is_cuda:
             torch.cuda.synchronize()
         t1 = time.time()
+        if not torch.isfinite(est).all():
+            log.warning("val clip %s: restored audio is non-finite (fp16 overflow?) -- its metrics are empty", song_key)
         gen = torch.Generator(device=hq.device)
         gen.manual_seed(self.val_seed + idx)
         cfm = float(self._cfm_loss(hq, lq, cutoff_hz, t=torch.full((1, 1, 1, 1), 0.5, device=hq.device), generator=gen))

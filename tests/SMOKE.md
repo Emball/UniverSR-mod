@@ -6,6 +6,7 @@ Config below: `configs/universr_stfl_new.yaml` (or `universr_mp3.yaml`). Data go
 1. **Setup.** Put `pytorch_model.bin` and `config.yaml` from `woongzip1/universr-audio` in `models/`. Run `universr.bat` (or `./universr.sh`): the TUI opens with the UniverSR-mod banner and lists the experiment configs, not `universr_pretrained`.
 2. **CPU unit tests.** `pip install pytest`, then `python -m pytest tests -q --ignore=tests/test_train_e2e.py`. Expect all pass; `test_model_equivalence` is the step-0 check against the released U-Net.
 3. **Real checkpoint loads.** `universr.bat inference --in_wav <any 44.1 kHz file> --out_wav out.wav --weights pretrained`. Expect a 48 kHz float WAV, no shape errors from the loader (the loader has only seen a random stand-in so far).
+3b. **Speed and fp16 check.** `python tests/bench_gpu.py --conf_dir configs/universr_stfl_new.yaml`. Compares model variants (ms/step, peak VRAM) and, with the pretrained weights, names the first module that goes non-finite in fp16.
 4. **Short training run.** Set `training.max_steps: 40` and `val_check_interval: 20`, then `universr.bat train --conf_dir configs/universr_stfl_new.yaml`. Check:
    - chunking and cache creation, then the baseline pass (arm A) with ViSQOL numbers
    - log says `fp16-mixed` on the 2080 Ti, loss finite (no NaN with the GradScaler)

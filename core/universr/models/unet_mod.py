@@ -14,6 +14,7 @@ from universr.models.unet import (
     DecoderBlock,
     EncoderBlock,
     FrequencyPositionalEmbedding,
+    GRN,
     LayerNorm,
     Midcoder,
     SinusoidalTimeEmbedding,
@@ -32,6 +33,27 @@ def _run(module, ckpt, *args):
     if ckpt and torch.is_grad_enabled():
         return checkpoint(module, *args, use_reentrant=False)
     return module(*args)
+
+
+class FastGRN(GRN):
+    """GRN with identical maths and the same parameters, but dtype-preserving: the original promotes the
+    4x-wide activation to fp32 under AMP (fp32 Nx times fp16 x) and makes several full-size temporaries."""
+
+    def forward(self, x):
+        gx = torch.linalg.vector_norm(x, ord=2, dim=(1, 2), keepdim=True, dtype=torch.float32)
+        nx = gx / (gx.mean(dim=-1, keepdim=True) + 1e-6)
+        scale = (self.gamma.float() * nx + 1.0).to(x.dtype)
+        return x * scale + self.beta.to(x.dtype)
+
+
+class FastLayerNorm(LayerNorm):
+    """channels_first LayerNorm through the fused kernel instead of ~8 elementwise passes."""
+
+    def forward(self, x):
+        if self.data_format == "channels_first":
+            y = F.layer_norm(x.permute(0, 2, 3, 1), self.normalized_shape, self.weight, self.bias, self.eps)
+            return y.permute(0, 3, 1, 2)
+        return super().forward(x)
 
 
 class BandwidthEmbedding(nn.Module):
@@ -80,7 +102,7 @@ class ConvNeXtUNetCondMod(ConditionalVectorFieldModel):
                  total_freq_bins=512, gen_start_bin=80,
                  feature_enc_layers=10, cond_dropout_prob=0.1,
                  bw_anchor_bins=PRETRAINED_ANCHOR_BINS,
-                 aligned_input=False, grad_checkpoint=False):
+                 aligned_input=False, grad_checkpoint=False, fast_ops=True, channels_last=False):
         super().__init__()
         dims, depths = list(dims), list(depths)
         self.strides = 2 ** len(dims)
@@ -122,6 +144,15 @@ class ConvNeXtUNetCondMod(ConditionalVectorFieldModel):
         self.apply(self._init_weights)
         if self.aligned_extra:
             self.init_conv[0].weight.data[:, in_channels + cond_dim:] = 0
+        self.channels_last = bool(channels_last)
+        if fast_ops:
+            for m in self.modules():
+                if type(m) is GRN:
+                    m.__class__ = FastGRN
+                elif type(m) is LayerNorm and m.data_format == "channels_first":
+                    m.__class__ = FastLayerNorm
+        if self.channels_last:
+            self.to(memory_format=torch.channels_last)
         log.info("model built: gen_bins=%d (start %d) anchors=%s aligned=%s ckpt=%s params=%.2fM",
                  self.hr_freq_bins, gen_start_bin, self.bw_anchor_bins, aligned_input,
                  grad_checkpoint, sum(p.numel() for p in self.parameters()) / 1e6)
@@ -202,6 +233,8 @@ class ConvNeXtUNetCondMod(ConditionalVectorFieldModel):
             feats.append(aligned)
 
         x = self.init_conv(torch.cat(feats, dim=1))
+        if self.channels_last:
+            x = x.contiguous(memory_format=torch.channels_last)
         skips = [x]
         ck = self.grad_checkpoint
         for enc in self.encoders:

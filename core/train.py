@@ -175,6 +175,7 @@ class StepPrinter(Callback):
         self.total, self.last_step, self.last_idx = 0, 0, 0
         self.t0, self.done = None, 0
         self.val_elapsed, self.val_t0 = 0.0, None
+        self.t_end, self.wait = None, 0.0
         self.sanity = True
 
     def on_train_epoch_start(self, trainer, pl_module):
@@ -185,6 +186,7 @@ class StepPrinter(Callback):
         self.done = 0
         self.val_elapsed = 0.0
         self.val_t0 = None
+        self.t_end, self.wait = None, 0.0
         print(f"\nEpoch {trainer.current_epoch} -- {self.total} batches", flush=True)
 
     def _vals(self, m):
@@ -196,8 +198,13 @@ class StepPrinter(Callback):
                 parts.append(f"{key}=" + fmt.format(float(v)))
         return ("  " + "  ".join(parts)) if parts else ""
 
+    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+        if self.t_end is not None:
+            self.wait += time.monotonic() - self.t_end
+
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         now = time.monotonic()
+        self.t_end = now
         if self.t0 is None:
             self.t0 = now
         self.done += 1
@@ -210,8 +217,11 @@ class StepPrinter(Callback):
         self.last_step = trainer.global_step
         self.last_idx = batch_idx
         pct = 100 * (batch_idx + 1) / max(1, self.total)
+        loss = trainer.callback_metrics.get("train_loss")
+        loss_s = f"  loss={float(loss):.4f}" if loss is not None else ""
+        data_s = f"  data={100 * self.wait / elapsed:.0f}%" if elapsed > 0 else ""
         print(f"\r  {pct:5.1f}%  step={trainer.global_step}  {batch_idx + 1}/{self.total}  {its:.2f} it/s"
-              f"{self._vals(pl_module)}", end="", flush=True)
+              f"{loss_s}{data_s}{self._vals(pl_module)}", end="", flush=True)
         self.pause_check()
 
     def pause_check(self):
@@ -231,6 +241,7 @@ class StepPrinter(Callback):
 
     def on_validation_epoch_start(self, trainer, pl_module):
         self.val_t0 = time.monotonic()
+        self.t_end = None
         self.sanity = trainer.sanity_checking
         if not self.sanity:
             print("\r  Validating...                                                  ", end="", flush=True)

@@ -95,6 +95,8 @@ model:
   gen_start_bin: 80
   aligned_input: true
   grad_checkpoint: true    # Apollo gradient_checkpointing: true
+  fast_ops: true           # fused GRN / LayerNorm, same maths and weights; false = original ops
+  channels_last: false     # NHWC memory format for the convs; try true after running tests/bench_gpu.py
 
 transform:
   window_fn: hann
@@ -121,7 +123,7 @@ system:
   sigma_min: 1.0e-4
   val_ode_steps: 4
   val_guidance: 1.5
-  val_chunk_sec: null
+  val_chunk_sec: 4.0       # restore validation clips in 4 s overlapped chunks; a whole 10 s clip needs ~10 GB of VRAM
   val_seed: 1234
   visqol_fraction: 1.0
   keep_lq_below_cutoff: auto
