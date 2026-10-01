@@ -36,7 +36,7 @@ log = logging.getLogger("universr.train")
 MODELS_DIR = os.path.join(REPO_ROOT, "models")
 PRETRAINED_NAMES = ("pytorch_model.bin", "universr.bin", "universr.pth", "universr.ckpt")
 HF_REPO = "woongzip1/universr-audio"
-SYSTEM_KEYS = {"sigma_min", "band_weights", "val_ode_steps", "val_guidance", "val_chunk_sec", "val_seed", "mem_log", "mem_log_every",
+SYSTEM_KEYS = {"sigma_min", "band_weights", "val_ode_steps", "val_guidance", "val_band_gain_db", "val_chunk_sec", "val_seed", "mem_log", "mem_log_every",
                "visqol_fraction", "keep_lq_below_cutoff", "lsd_cutoff_hz", "t_skew", "aux_logmag_weight", "alpha_start",
                "alpha_anneal_steps"}
 

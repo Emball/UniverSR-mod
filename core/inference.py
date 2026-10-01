@@ -44,7 +44,7 @@ def _progress():
 
 
 def run(in_wav, out_wav, weights=None, conf_dir=None, device="auto", precision="auto", chunk_sec=6.0,
-        overlap_sec=0.5, chunked=True, cutoff_hz="auto", steps=None, guidance=None, seed=1234,
+        overlap_sec=0.5, chunked=True, cutoff_hz="auto", steps=None, guidance=None, band_gain_db=None, seed=1234,
         shared_noise=False, match_input_sr=False, ensemble=None, low_end_preserve=False, low_end_hz=700.0,
         aux_weights=None, aux_conf_dir=None, aux_ensemble=None):
     bands = parse_bands(ensemble)
@@ -60,12 +60,22 @@ def run(in_wav, out_wav, weights=None, conf_dir=None, device="auto", precision="
     log.info("input: %s (%.1f s, %d ch, %d Hz)", in_wav, wav.shape[-1] / sr_in, wav.shape[0], sr_in)
     out, out_sr = restore_audio(
         rs, wav, sr_in, cutoff=cutoff_hz, chunk_sec=chunk_sec if chunked else None, overlap_sec=overlap_sec,
-        steps=steps, guidance=guidance, seed=seed, shared_noise=shared_noise, bands=bands, aux=aux,
+        steps=steps, guidance=guidance, band_gain_db=band_gain_db, seed=seed, shared_noise=shared_noise, bands=bands, aux=aux,
         aux_bands=parse_bands(aux_ensemble), match_input_sr=match_input_sr, progress=_progress())
 
     os.makedirs(os.path.dirname(os.path.abspath(out_wav)), exist_ok=True)
     save_wav_f32(out, out_wav, out_sr)
     log.info("saved -> %s (%d Hz)", out_wav, out_sr)
+
+
+def parse_gain(spec):
+    if not spec:
+        return None
+    out = []
+    for part in spec.split(","):
+        lo, hi, db = part.split(":")
+        out.append([float(lo), float(hi), float(db)])
+    return out
 
 
 def main():
@@ -86,6 +96,8 @@ def main():
     ap.add_argument("--cutoff_hz", default=None,
                     help="codec lowpass in Hz, or 'auto' to detect it; default: datas.cutoff_hz from the config, else auto")
     ap.add_argument("--steps", type=int, default=None, help="ODE steps (default: from config, else 4)")
+    ap.add_argument("--band_gain_db", default=None,
+                    help='per-band level in dB on the generated bins, "lo_hz:hi_hz:db,..." e.g. "16000:22000:6.7,12000:16000:2.7" (default: config val_band_gain_db)')
     ap.add_argument("--guidance", type=float, default=None, help="CFG scale (default: from config, else 1.5)")
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--shared_noise", action="store_true", help="use the same noise for L and R")
@@ -113,7 +125,7 @@ def main():
         cutoff = float(cutoff)
     run(a.in_wav, a.out_wav, weights=a.weights, conf_dir=a.conf_dir, device=a.device, precision=a.precision,
         chunk_sec=a.chunk_sec, overlap_sec=a.overlap_sec, chunked=not a.no_chunked, cutoff_hz=cutoff,
-        steps=a.steps, guidance=a.guidance, seed=a.seed, shared_noise=a.shared_noise,
+        steps=a.steps, guidance=a.guidance, band_gain_db=parse_gain(a.band_gain_db), seed=a.seed, shared_noise=a.shared_noise,
         match_input_sr=a.match_input_sr, ensemble=a.ensemble, low_end_preserve=a.low_end_preserve,
         low_end_hz=a.low_end_hz, aux_weights=a.aux_weights, aux_conf_dir=a.aux_conf_dir, aux_ensemble=a.aux_ensemble)
 

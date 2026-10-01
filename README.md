@@ -197,6 +197,7 @@ Output is a 32-bit float WAV at the model's sample rate. Stereo files are restor
 | `--cutoff_hz` | LQ cutoff in Hz, or `auto`. Defaults to `datas.cutoff_hz` from the config. |
 | `--steps` | ODE integration steps. Defaults to `system.val_ode_steps`. |
 | `--guidance` | Classifier-free guidance scale. `0` disables it. Defaults to `system.val_guidance`. |
+| `--band_gain_db` | Level change in dB on the generated bins, as `lo_hz:hi_hz:db,...`. Defaults to `system.val_band_gain_db`. |
 | `--seed` | Noise seed. Default `1234`. |
 | `--shared_noise` | Use the same noise for left and right. |
 | `--match_input_sr` | Resample the output to the input file's sample rate. |

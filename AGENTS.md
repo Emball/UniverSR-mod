@@ -96,3 +96,5 @@ usr/cache/baseline/       # cached baseline pass
 
 ## Versioning
 `VERSION` file, MAJOR.MINOR.PATCH.MICRO. Commit message is the version only.
+
+- Decode-time band gain: `system.val_band_gain_db` ([[lo_hz, hi_hz, db], ...]) and `inference.py --band_gain_db` scale generated bins after sampling (gain g applied as g^alpha in the compressed domain). Used for validation and inference only, never training. Alpha anneal stays off (alpha 0.2); it cost ViSQOL and quiet-bin level.

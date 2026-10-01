@@ -133,6 +133,7 @@ def load_restorer(weights=None, conf_dir=None, device="auto", precision="auto", 
     rs = Restorer(model, transform, tcfg["sampling_rate"], dev, pick_amp_dtype(precision, dev),
                   sc.get("val_ode_steps", 4), sc.get("val_guidance", 1.5), keep, os.path.basename(weights))
     rs.lsd_cutoff_hz = sc.get("lsd_cutoff_hz")
+    rs.band_gain_db = [list(map(float, b)) for b in (sc.get("val_band_gain_db") or [])] or None
     log.info("ready: sr=%d device=%s amp=%s steps=%d guidance=%s aligned_input=%s keep_lq_below_cutoff=%s",
              rs.sr, dev, rs.amp_dtype, rs.steps, rs.guidance, model.aligned_input, keep)
     return rs
@@ -156,7 +157,8 @@ def resolve_cutoff(spec, mono_np, sr):
     return resolve_cutoff_hz("auto", mono_np, sr)
 
 
-def _run_channels(rs, xs, cutoff_hz, chunk_sec, overlap_sec, steps, guidance, seed, shared_noise, progress, tag):
+def _run_channels(rs, xs, cutoff_hz, chunk_sec, overlap_sec, steps, guidance, seed, shared_noise, progress, tag,
+                  band_gain_db=None):
     outs = []
     for c in range(xs.shape[0]):
         def cb(done, total, c=c):
@@ -166,13 +168,14 @@ def _run_channels(rs, xs, cutoff_hz, chunk_sec, overlap_sec, steps, guidance, se
             rs.model, rs.transform, xs[c:c + 1].to(rs.device), cutoff_hz, rs.sr,
             chunk_sec=chunk_sec, overlap_sec=overlap_sec, progress=cb,
             steps=rs.steps if steps is None else steps, guidance=rs.guidance if guidance is None else guidance,
-            keep_lq_below_cutoff=rs.keep_lq, seed=seed if shared_noise else seed + c, amp_dtype=rs.amp_dtype)
+            keep_lq_below_cutoff=rs.keep_lq, seed=seed if shared_noise else seed + c, amp_dtype=rs.amp_dtype,
+            band_gain_db=getattr(rs, "band_gain_db", None) if band_gain_db is None else band_gain_db)
         outs.append(out.cpu())
     return torch.cat(outs, dim=0)
 
 
 def restore_audio(rs, wav, sr_in, cutoff="auto", chunk_sec=6.0, overlap_sec=0.5, steps=None, guidance=None,
-                  seed=1234, shared_noise=False, bands=None, aux=None, aux_bands=None,
+                  seed=1234, shared_noise=False, bands=None, aux=None, aux_bands=None, band_gain_db=None,
                   target_peak_dbfs=-3.0, match_input_sr=False, progress=None):
     """[C,N] at sr_in -> ([C,N'], sr_out). Channels are restored independently, as in Apollo-mod."""
     x = resample(wav[:2].float(), sr_in, rs.sr)
@@ -188,14 +191,14 @@ def restore_audio(rs, wav, sr_in, cutoff="auto", chunk_sec=6.0, overlap_sec=0.5,
              20 * torch.log10(torch.tensor(peak)).item(), target_peak_dbfs)
 
     enhanced = _run_channels(rs, xs, cutoff_hz, chunk_sec, overlap_sec, steps, guidance, seed, shared_noise,
-                             progress, "restoring") / scale
+                             progress, "restoring", band_gain_db) / scale
     if bands:
         enhanced = merge_long(x, enhanced, rs.sr, bands)
     if aux is not None:
         if aux.sr != rs.sr:
             raise ValueError(f"aux model sample rate {aux.sr} differs from primary {rs.sr}")
         aux_out = _run_channels(aux, xs, cutoff_hz, chunk_sec, overlap_sec, steps, guidance, seed, shared_noise,
-                                progress, "aux") / scale
+                                progress, "aux", band_gain_db) / scale
         ab = aux_bands or bands
         if ab:
             enhanced = merge_long(aux_out, enhanced, rs.sr, ab)

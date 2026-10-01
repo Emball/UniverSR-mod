@@ -37,6 +37,7 @@ class UniverSRSystem(pl.LightningModule):
         val_rotate_every="auto",
         val_ode_steps=4,
         val_guidance=1.5,
+        val_band_gain_db=None,
         val_chunk_sec=None,
         val_audio_dir=None,
         val_seed=1234,
@@ -63,6 +64,7 @@ class UniverSRSystem(pl.LightningModule):
         self.val_rotate_every = val_rotate_every
         self.val_ode_steps = int(val_ode_steps)
         self.val_guidance = val_guidance
+        self.val_band_gain_db = [list(map(float, b)) for b in (val_band_gain_db or [])]
         self.val_chunk_sec = val_chunk_sec
         self.val_audio_dir = val_audio_dir
         self.val_seed = int(val_seed)
@@ -334,6 +336,7 @@ class UniverSRSystem(pl.LightningModule):
             chunk_sec=self.val_chunk_sec,
             steps=self.val_ode_steps if steps is None else steps,
             guidance=self.val_guidance,
+            band_gain_db=self.val_band_gain_db or None,
             keep_lq_below_cutoff=self.keep_lq,
             seed=seed,
             amp_dtype=self._amp_dtype(),

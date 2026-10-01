@@ -84,8 +84,21 @@ def ode_sample(model, y, cutoff_bins, num_frames, steps=4, guidance=1.5, seed=No
 
 
 @torch.no_grad()
+def band_gain_vector(transform, sr, bins, offset, band_gain_db):
+    """Per-bin linear gain for generated bins [offset, offset+bins) from [[lo_hz, hi_hz, db], ...]; overlaps add in dB."""
+    n_fft = transform.complex_stft.n_fft
+    db = torch.zeros(bins)
+    for lo, hi, g in band_gain_db:
+        a = max(0, int(round(float(lo) * n_fft / sr)) - offset)
+        b = min(bins, int(round(float(hi) * n_fft / sr)) - offset)
+        if b > a:
+            db[a:b] += float(g)
+    return 10 ** (db / 20.0)
+
+
+@torch.no_grad()
 def restore(model, transform, lq, cutoff_hz, sr, steps=4, guidance=1.5,
-            keep_lq_below_cutoff=None, seed=None, amp_dtype=None):
+            keep_lq_below_cutoff=None, seed=None, amp_dtype=None, band_gain_db=None):
     """lq [B,1,N] -> restored [B,1,N] fp32."""
     n_fft = transform.complex_stft.n_fft
     length = lq.shape[-1]
@@ -99,6 +112,10 @@ def restore(model, transform, lq, cutoff_hz, sr, steps=4, guidance=1.5,
            if amp_dtype is not None else contextlib.nullcontext())
     with ctx:
         x1 = ode_sample(model, Y, cb, Y.shape[-1], steps, guidance, seed)
+    if band_gain_db:
+        # compressed value = |X|^alpha with phase kept, so a linear gain g becomes g^alpha here
+        g = band_gain_vector(transform, sr, x1.shape[-2], model.gen_start_bin, band_gain_db).to(x1.device)
+        x1 = x1 * (g ** float(transform.compress.compression_exponent)).reshape(1, 1, -1, 1)
     full = assemble(Y, x1, cb, model.gen_start_bin, keep_lq_below_cutoff)
     return to_wave(transform, full, length)
 
