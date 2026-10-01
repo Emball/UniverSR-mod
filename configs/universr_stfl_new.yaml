@@ -1,7 +1,7 @@
 # UniverSR-mod: port of Apollo-mod's apollo_stfl_new.yaml, tuned for RTX 2080 Ti 11 GB / 16 GB RAM.
 # Data goes in data/universr_stfl_new/{train,val}/{LQ,HQ} (data is located by exp.name).
 # Arm C (aligned channels). For arm B set model.aligned_input: false.
-# Not ported: GAN discriminator and its losses, extra_layers, target_band_loss (disabled in the source anyway).
+# Not ported: GAN discriminator and its losses, extra_layers, target_band_loss and band weighting (no frequency-targeted loss).
 
 exp:
   dir: ./runs
@@ -125,7 +125,3 @@ system:
   val_seed: 1234
   visqol_fraction: 1.0
   keep_lq_below_cutoff: auto
-  # Apollo band weight: 1 + gain * exp(-0.5 * ((f - center) / sigma)^2), peak 2.5 at 15 kHz.
-  # (Apollo's lo/hi/ramp values only apply to its trapezoid shape and are not used.)
-  band_weights:
-    - {shape: gaussian, center_hz: 15000, sigma_hz: 3000, gain: 1.5}

@@ -126,7 +126,3 @@ system:
   val_seed: 1234
   visqol_fraction: 1.0
   keep_lq_below_cutoff: auto   # auto: keep real bins below the cutoff in arm B, regenerate them in arm C
-  # Apollo's band weighting (center 6.75 kHz, sigma 3.75 kHz) and target band (3-10.5 kHz), as one band.
-  # Bins below gen_start_bin * 46.875 Hz (3.75 kHz at 80) are outside the generated region.
-  band_weights:
-    - {lo_hz: 3000, hi_hz: 10500, weight: 1.5}
