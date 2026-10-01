@@ -81,6 +81,7 @@ class Restorer:
         self.device, self.amp_dtype = device, amp_dtype
         self.steps, self.guidance, self.keep_lq = int(steps), guidance, keep_lq
         self.source = source
+        self.lsd_cutoff_hz = None
 
 
 def load_restorer(weights=None, conf_dir=None, device="auto", precision="auto", prefer_ema=True):
@@ -129,6 +130,7 @@ def load_restorer(weights=None, conf_dir=None, device="auto", precision="auto", 
         transform = transform.to(dev)
     rs = Restorer(model, transform, tcfg["sampling_rate"], dev, pick_amp_dtype(precision, dev),
                   sc.get("val_ode_steps", 4), sc.get("val_guidance", 1.5), keep, os.path.basename(weights))
+    rs.lsd_cutoff_hz = sc.get("lsd_cutoff_hz")
     log.info("ready: sr=%d device=%s amp=%s steps=%d guidance=%s aligned_input=%s keep_lq_below_cutoff=%s",
              rs.sr, dev, rs.amp_dtype, rs.steps, rs.guidance, model.aligned_input, keep)
     return rs

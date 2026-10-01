@@ -25,7 +25,7 @@ from pytorch_lightning.callbacks import Callback, ModelCheckpoint  # noqa: E402
 from ckpt_utils import best_checkpoint, export_model, latest_checkpoint, list_checkpoints, load_ckpt, model_state_from_ckpt, rank_key  # noqa: E402
 from data_prep import CACHE_DIR, prepare_data  # noqa: E402
 from paired_datamodule import PairedAudioDataModule  # noqa: E402
-from train_opt import apply_optimizations, freeze_by_prefix, make_optimizer, make_scheduler, resolve_precision  # noqa: E402
+from train_opt import apply_optimizations, freeze_by_prefix, make_optimizer, make_scheduler, param_groups, resolve_precision  # noqa: E402
 from universr.models.loader import build_model, load_pretrained, load_state_dict_into  # noqa: E402
 from universr.sampling import make_transform  # noqa: E402
 from universr.system import UniverSRSystem  # noqa: E402
@@ -37,7 +37,7 @@ MODELS_DIR = os.path.join(REPO_ROOT, "models")
 PRETRAINED_NAMES = ("pytorch_model.bin", "universr.bin", "universr.pth", "universr.ckpt")
 HF_REPO = "woongzip1/universr-audio"
 SYSTEM_KEYS = {"sigma_min", "band_weights", "val_ode_steps", "val_guidance", "val_chunk_sec", "val_seed",
-               "visqol_fraction", "keep_lq_below_cutoff"}
+               "visqol_fraction", "keep_lq_below_cutoff", "lsd_cutoff_hz"}
 
 
 def setup_logging():
@@ -324,7 +324,14 @@ def build_everything(cfg, run_dir, resuming):
     trainable = [p for p in model.parameters() if p.requires_grad]
     log.info("[model] trainable params: %.2fM", sum(p.numel() for p in trainable) / 1e6)
 
-    optimizer = make_optimizer(trainable, OmegaConf.to_container(cfg.optimizer, resolve=True))
+    oc = OmegaConf.to_container(cfg.optimizer, resolve=True)
+    mult = oc.pop("lr_mult", None) or {}
+    if mult and str(oc.get("type", "adamw")).lower() in ("adamw", "adamw_8bit"):
+        trainable = param_groups(((n, p) for n, p in model.named_parameters() if p.requires_grad),
+                                 float(oc.get("lr", 5e-5)), mult)
+    elif mult:
+        log.warning("[optimizer] lr_mult is only supported for adamw / adamw_8bit -- ignored")
+    optimizer = make_optimizer(trainable, oc)
     scheduler = make_scheduler(optimizer, OmegaConf.to_container(cfg.get("scheduler", {}), resolve=True), int(tr.max_steps))
 
     sc = OmegaConf.to_container(cfg.get("system", {}), resolve=True) or {}

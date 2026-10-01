@@ -71,7 +71,7 @@ def evaluate_restorer(rs, dataset, indices, run_visqol, seed, print_fn=print):
                                steps=rs.steps, guidance=rs.guidance, keep_lq_below_cutoff=rs.keep_lq,
                                seed=seed + idx, amp_dtype=rs.amp_dtype).cpu().clamp(-1.0, 1.0)
             row = {"sisdr": M.sisdr(est, hq), "hfnr": M.hfnr(est, hq, rs.sr),
-                   "lsd_high": M.lsd(est, hq, float(cut), rs.sr)[1]}
+                   "lsd_high": M.lsd(est, hq, rs.lsd_cutoff_hz or float(cut), rs.sr)[1]}
             if run_visqol:
                 v = M.visqol(est, hq, rs.sr)
                 if v is not None:

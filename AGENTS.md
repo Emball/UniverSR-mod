@@ -51,6 +51,8 @@ Fork of woongzip1/UniverSR (MIT, ICASSP 2026): trainable and finetunable on cons
 
 - Non-finite loss: `system._check_finite` runs `diagnose.run` once (per-module trace under autocast and fp32, plus input checks, logged as `[nan-diag]`) and aborts after 25 consecutive non-finite losses. `model.fp32_modules` (submodule paths, every leaf under each) runs those modules with autocast off; default `encoders.3.blocks` + `midcoder` because the pretrained net's activations reach ~1e5 in `encoders.3` (measured), above the fp16 max of 65504. The conditioning encoder's frequency mean is computed in fp32.
 
+- Full-band conditioning: configs set `datas.cutoff_hz: 24000` (every LQ bin valid; the mask is all ones) because iTunes-MP3 damage is wideband and the specks above the lowpass carry information. `system.lsd_cutoff_hz` (16000) defines the LSD region instead of the model cutoff. `inference.py` defaults `--cutoff_hz` to the config's `datas.cutoff_hz`. `optimizer.lr_mult` ({prefix: factor}, adamw/adamw_8bit) boosts the lr of the aligned channels (`init_conv.`) and `bw_embedder.`.
+
 ## Upstream training distribution (keep data matched)
 - Samples are random 32767-sample crops (~0.68 s, `num_samples`) of whole files, one per file per epoch, mean-downmixed to mono. We crop from cached 3 s chunks at 50% overlap (every crop fits inside some chunk) and take a single channel via `stereo_alternation`.
 - Upstream draws one bandwidth per batch; we use a per-sample cutoff in Hz.

@@ -46,7 +46,8 @@ datas:
   pin_memory: false
   val_bootstrap_chunks: 15
   align_data: 0
-  cutoff_hz: auto          # per-sample codec lowpass: auto | Hz | [min_hz, max_hz]
+  cutoff_hz: 24000         # full band: the whole LQ spectrum (incl. the specks above the lowpass) is valid conditioning.
+                           # auto | Hz | [min_hz, max_hz] are also accepted; the live `noise` augmentation defeats auto
   cache_peak_dbfs: -1.0
   train_peak_dbfs: [-6.0, -1.0]
   val_peak_dbfs: -3.0
@@ -113,6 +114,7 @@ optimizer:
   lr: 1.0e-5               # Apollo lr_g (lr_d unused, no discriminator)
   weight_decay: 0.01
   betas: [0.9, 0.999]
+  lr_mult: {"init_conv.": 10.0, "bw_embedder.": 10.0}   # new aligned channels and bandwidth embedding learn 10x faster (adamw only)
 
 # Apollo StepLR(2, 0.98) steps per epoch there; here the scheduler steps per optimizer step and would
 # collapse the lr, so constant after a short warmup.
@@ -128,3 +130,4 @@ system:
   val_seed: 1234
   visqol_fraction: 1.0
   keep_lq_below_cutoff: auto
+  lsd_cutoff_hz: 16000     # LSD is measured above this frequency (the model cutoff is full band, so it can't define the region)

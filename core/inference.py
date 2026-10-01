@@ -83,8 +83,8 @@ def main():
     ap.add_argument("--device", default="auto", help="'auto', 'cuda', 'cpu', 'cuda:1', ...")
     ap.add_argument("--precision", default="auto", choices=["auto", "fp32", "fp16", "bf16"],
                     help="auto: bf16 on Ampere+, fp16 on Turing, fp32 on CPU")
-    ap.add_argument("--cutoff_hz", default="auto",
-                    help="codec lowpass in Hz, or 'auto' to detect the spectral drop of the input")
+    ap.add_argument("--cutoff_hz", default=None,
+                    help="codec lowpass in Hz, or 'auto' to detect it; default: datas.cutoff_hz from the config, else auto")
     ap.add_argument("--steps", type=int, default=None, help="ODE steps (default: from config, else 4)")
     ap.add_argument("--guidance", type=float, default=None, help="CFG scale (default: from config, else 1.5)")
     ap.add_argument("--seed", type=int, default=1234)
@@ -100,6 +100,15 @@ def main():
     a = ap.parse_args()
 
     cutoff = a.cutoff_hz
+    if cutoff is None:
+        cutoff = "auto"
+        try:
+            import yaml
+            c = yaml.safe_load(open(a.conf_dir)).get("datas", {}).get("cutoff_hz", "auto")
+            if isinstance(c, (int, float)) and not isinstance(c, bool):
+                cutoff = c
+        except Exception:
+            pass
     if cutoff != "auto":
         cutoff = float(cutoff)
     run(a.in_wav, a.out_wav, weights=a.weights, conf_dir=a.conf_dir, device=a.device, precision=a.precision,

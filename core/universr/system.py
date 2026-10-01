@@ -42,6 +42,7 @@ class UniverSRSystem(pl.LightningModule):
         val_seed=1234,
         visqol_fraction=1.0,
         keep_lq_below_cutoff="auto",
+        lsd_cutoff_hz=None,
     ):
         super().__init__()
         self.audio_model = model
@@ -60,6 +61,7 @@ class UniverSRSystem(pl.LightningModule):
         self.val_audio_dir = val_audio_dir
         self.val_seed = int(val_seed)
         self.visqol_fraction = max(0.0, min(1.0, float(visqol_fraction)))
+        self.lsd_cutoff_hz = None if lsd_cutoff_hz is None else float(lsd_cutoff_hz)
         self.keep_lq = (not model.aligned_input) if keep_lq_below_cutoff == "auto" else bool(keep_lq_below_cutoff)
 
         bin_hz = sample_rate / self.n_fft
@@ -271,7 +273,7 @@ class UniverSRSystem(pl.LightningModule):
         row = {
             "sisdr": M.sisdr(est, hq),
             "hfnr": M.hfnr(est, hq, self.sample_rate),
-            "lsd_high": M.lsd(est, hq, float(cutoff_hz[0]), self.sample_rate)[1],
+            "lsd_high": M.lsd(est, hq, self.lsd_cutoff_hz or float(cutoff_hz[0]), self.sample_rate)[1],
             "cfm": cfm,
             "visqol": None,
         }

@@ -140,6 +140,26 @@ def make_optimizer(params, cfg):
     return torch.optim.AdamW(params, lr=lr, weight_decay=wd, betas=betas)
 
 
+def param_groups(named, lr, mult):
+    """Split (name, param) pairs into AdamW groups; names starting with a key in `mult` get lr * factor."""
+    named = list(named)
+    for pre in mult:
+        if not any(n.startswith(pre) for n, _ in named):
+            raise ValueError(f"lr_mult prefix {pre!r} matches no trainable parameter")
+    base, boosted = [], {}
+    for n, p in named:
+        f = next((float(v) for k, v in mult.items() if n.startswith(k)), None)
+        if f is None:
+            base.append(p)
+        else:
+            boosted.setdefault(f, []).append(p)
+    groups = [{"params": base, "lr": lr}] if base else []
+    for f, ps in boosted.items():
+        log.info("[optimizer] lr x%g on %d tensors (%.2fM params)", f, len(ps), sum(p.numel() for p in ps) / 1e6)
+        groups.append({"params": ps, "lr": lr * f})
+    return groups
+
+
 def make_scheduler(optimizer, cfg, max_steps):
     cfg = cfg or {}
     kind = str(cfg.get("type", "cosine")).lower()
