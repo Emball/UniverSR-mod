@@ -1,3 +1,4 @@
+import contextlib
 import logging
 
 import torch
@@ -94,7 +95,9 @@ def restore(model, transform, lq, cutoff_hz, sr, steps=4, guidance=1.5,
     if keep_lq_below_cutoff is None:
         keep_lq_below_cutoff = not model.aligned_input
     Y = to_spec(transform, lq, pad_to_hop=True)
-    with torch.autocast(device_type=lq.device.type, dtype=amp_dtype, enabled=amp_dtype is not None):
+    ctx = (torch.autocast(device_type=lq.device.type, dtype=amp_dtype)
+           if amp_dtype is not None else contextlib.nullcontext())
+    with ctx:
         x1 = ode_sample(model, Y, cb, Y.shape[-1], steps, guidance, seed)
     full = assemble(Y, x1, cb, model.gen_start_bin, keep_lq_below_cutoff)
     return to_wave(transform, full, length)
