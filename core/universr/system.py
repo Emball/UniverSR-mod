@@ -2,6 +2,7 @@ import logging
 import math
 import os
 import random
+import time
 import re
 
 import pytorch_lightning as pl
@@ -236,7 +237,11 @@ class UniverSRSystem(pl.LightningModule):
         if idx not in self._active_indices:
             return None
 
+        t0 = time.time()
         est = self._restore(lq, cutoff_hz, self.val_seed + idx).clamp(-1.0, 1.0)
+        if hq.is_cuda:
+            torch.cuda.synchronize()
+        t1 = time.time()
         gen = torch.Generator(device=hq.device)
         gen.manual_seed(self.val_seed + idx)
         cfm = float(self._cfm_loss(hq, lq, cutoff_hz, t=torch.full((1, 1, 1, 1), 0.5, device=hq.device), generator=gen))
@@ -248,9 +253,11 @@ class UniverSRSystem(pl.LightningModule):
             "cfm": cfm,
             "visqol": None,
         }
+        t2 = time.time()
         if random.Random(self.val_seed + idx).random() < self.visqol_fraction:
             row["visqol"] = M.visqol(est, hq, self.sample_rate)
         self._val_rows.append(row)
+        log.info("val clip %s: sample %.1fs, metrics %.1fs, visqol %.1fs", song_key, t1 - t0, t2 - t1, time.time() - t2)
 
         if self.val_audio_dir:
             out = os.path.join(self.val_audio_dir, f"step_{self.global_step:06d}")
