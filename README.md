@@ -24,13 +24,14 @@ This fork reworks it for fine-tuning on your own LQ/HQ pairs, with the same inte
 
 **Data**
 - Trains on LQ and HQ files you supply. Upstream's on-the-fly low-pass and downsample generation is removed.
-- Files are resampled once to 48 kHz when chunked, with the same filter for LQ and HQ.
+- Files are resampled once to `datas.sr` when chunked, with the same filter for LQ and HQ. Files already at that rate are not resampled.
 - Input bandwidth is a per-sample cutoff in Hz. Upstream's fixed 8/12/16/24 kHz table is replaced, so LQ files with any cutoff, or none, can be used.
 - Augmentations from Apollo-mod, live or cached: stereo alternation, mid/side isolation, gain, deep gain, silence dip, polarity, pitch shift, noise and MP3 degradation.
 
 **Model**
 - Optional aligned input channels (arm C) give the network the degraded spectrum bin by bin, so it can repair bins inside the LQ band as well as extend it. Arm B keeps upstream's input. Both start from the released weights and produce the same output as the released model at step 0.
 - The first generated bin is configurable.
+- The sample rate, STFT size and bin count are configurable, so files can be trained at their native rate. `configs/universr_44k.yaml` uses a 960-point STFT with 480 bins for 44.1 kHz.
 
 **Training**
 - fp16 on GPUs before Ampere, bf16 on Ampere and newer.
@@ -101,7 +102,7 @@ data/universr_stfl2/
 
 WAV, MP3 and FLAC are accepted. Files without a matching partner are skipped with a warning. Sources can be at any sample rate.
 
-On first run, files are resampled to 48 kHz and chunked into fixed-length segments under `usr/cache/chunks/`. The cache is keyed on source file contents and chunk parameters, so changing either triggers a rebuild. The cache is shared across configs that use the same dataset and parameters.
+On first run, files are resampled to `datas.sr` and chunked into fixed-length segments under `usr/cache/chunks/`. The cache is keyed on source file contents and chunk parameters, so changing either triggers a rebuild. The cache is shared across configs that use the same dataset and parameters.
 
 If your LQ files are delayed relative to HQ, set `datas.align_data` to the delay in samples of the LQ file. Set it to `0` to disable.
 
@@ -182,7 +183,7 @@ Open the TUI and select **Inference** to pick a config, model and input file. Th
 universr.bat inference --in_wav input.wav --out_wav output.wav --conf_dir configs/universr_stfl2.yaml
 ```
 
-Output is a 32-bit float WAV at 48 kHz. Stereo files are restored one channel at a time. Long files are processed in overlapping chunks.
+Output is a 32-bit float WAV at the model's sample rate. Stereo files are restored one channel at a time. Long files are processed in overlapping chunks.
 
 | Flag | Description |
 |---|---|
@@ -280,7 +281,8 @@ Experiment configs live in `configs/`. `configs/universr_stfl2.yaml` and `config
 | Key | Description |
 |---|---|
 | `exp.dir` | Root directory for run outputs. |
-| `exp.name` | Run folder name. Also the data folder: `data/<name>/`. |
+| `exp.name` | Run folder name. Also the data folder: `data/<name>/` unless `exp.data` is set. |
+| `exp.data` | Optional data folder name under `data/`. |
 | `resume` | `true` resumes the newest run. `false` starts a new run. |
 | `seed` | Random seed. |
 | `weights_path` | Pretrained weights or a previous `.ckpt`. `null` uses `models/pytorch_model.bin`. |
@@ -315,7 +317,7 @@ Experiment configs live in `configs/`. `configs/universr_stfl2.yaml` and `config
 
 | Key | Description |
 |---|---|
-| `sr` | Sample rate. `48000` for the pretrained weights. |
+| `sr` | Sample rate. Must equal `transform.sampling_rate`. The pretrained weights use `48000`. |
 | `segment_sec` | Cached chunk length in seconds. |
 | `overlap` | Fractional overlap between cached chunks. |
 | `crop_samples` | Training crop length in samples, drawn from each chunk. |
@@ -348,7 +350,8 @@ Experiment configs live in `configs/`. `configs/universr_stfl2.yaml` and `config
 
 | Key | Description |
 |---|---|
-| `in_channels`, `out_channels`, `dims`, `depths`, `drop_path`, `time_dim`, `cond_dim`, `total_freq_bins`, `feature_enc_layers`, `cond_dropout_prob` | Architecture. Must match the pretrained weights. |
+| `in_channels`, `out_channels`, `dims`, `depths`, `drop_path`, `time_dim`, `cond_dim`, `feature_enc_layers`, `cond_dropout_prob` | Architecture. Must match the pretrained weights. |
+| `total_freq_bins` | STFT bins the model works on. The pretrained weights use `512`. Smaller values load from them. `total_freq_bins - gen_start_bin` must be a multiple of 16. |
 | `gen_start_bin` | First generated STFT bin. `80` matches the released model. `0` also generates bins 0 to 79. |
 | `aligned_input` | `true` enables the aligned input channels (arm C). `false` is arm B. |
 | `grad_checkpoint` | Recomputes activations during backward to reduce VRAM. |
@@ -358,7 +361,7 @@ Experiment configs live in `configs/`. `configs/universr_stfl2.yaml` and `config
 
 ### transform
 
-STFT settings: `window_fn`, `n_fft`, `sampling_rate`, `hop_length`, `alpha`, `beta`, `comp_eps`. Must match the pretrained weights.
+STFT settings: `window_fn`, `n_fft`, `sampling_rate`, `hop_length`, `alpha`, `beta`, `comp_eps`. The pretrained weights use `n_fft` 1024 and `hop_length` 512 at 48 kHz. Other values load from them and adapt during fine-tuning.
 
 ### optimizer and scheduler
 

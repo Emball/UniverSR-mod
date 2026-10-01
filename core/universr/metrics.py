@@ -80,17 +80,22 @@ def _get_visqol():
         return None
 
 
+VISQOL_SR = 48000
+
+
 def visqol(est, ref, sr=48000):
     api = _get_visqol()
     if api is None:
         return None
     try:
-        if sr != 48000:
-            raise ValueError(f"ViSQOL audio mode needs 48 kHz, got {sr}")
-        e = est.detach().float().cpu().reshape(-1).numpy().astype(np.float64)
-        r = ref.detach().float().cpu().reshape(-1).numpy().astype(np.float64)
-        pad = np.zeros(int(0.5 * sr), dtype=np.float64)
-        res = api.measure_from_arrays(np.concatenate([pad, r, pad]), np.concatenate([pad, e, pad]), sr)
+        e = est.detach().float().cpu().reshape(-1)
+        r = ref.detach().float().cpu().reshape(-1)
+        if sr != VISQOL_SR:
+            from audio_io import resample
+            e, r = resample(e[None], sr, VISQOL_SR)[0], resample(r[None], sr, VISQOL_SR)[0]
+        e, r = e.numpy().astype(np.float64), r.numpy().astype(np.float64)
+        pad = np.zeros(int(0.5 * VISQOL_SR), dtype=np.float64)
+        res = api.measure_from_arrays(np.concatenate([pad, r, pad]), np.concatenate([pad, e, pad]), VISQOL_SR)
         return float(res.moslqo)
     except Exception as e:
         log.warning("ViSQOL measurement failed: %s", e)

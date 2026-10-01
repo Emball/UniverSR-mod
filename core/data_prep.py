@@ -374,7 +374,7 @@ def prepare_data(cfg: DictConfig) -> None:
         cached_aug_fn=build_cached_aug_fn(cached_raw, sr),
     )
 
-    data_root = os.path.join(REPO_ROOT, "data", cfg.exp.name)
+    data_root = os.path.join(REPO_ROOT, "data", cfg.exp.get("data") or cfg.exp.name)
     data_train, data_val = os.path.join(data_root, "train"), os.path.join(data_root, "val")
     normalize_data_dir(data_train, "train")
     normalize_data_dir(data_val, "val")

@@ -350,8 +350,7 @@ def build_everything(cfg, run_dir, resuming):
     tcfg = OmegaConf.to_container(cfg.transform, resolve=True)
     sr = int(cfg.datas.sr)
     if int(tcfg["sampling_rate"]) != sr:
-        raise ValueError(f"datas.sr ({sr}) must equal transform.sampling_rate ({tcfg['sampling_rate']}); "
-                         "the pretrained weights are 48 kHz")
+        raise ValueError(f"datas.sr ({sr}) must equal transform.sampling_rate ({tcfg['sampling_rate']})")
     model = build_model(mc, gen_start_bin=mc.get("gen_start_bin"), aligned_input=bool(mc.get("aligned_input", False)),
                         bw_anchor_bins=mc.get("bw_anchor_bins"), grad_checkpoint=bool(mc.get("grad_checkpoint", False)))
     weights = None
