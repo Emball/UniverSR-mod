@@ -372,10 +372,16 @@ def train(cfg: DictConfig):
         log.warning("[logger] TensorBoard unavailable (%s) -- continuing without it", e)
 
     vci = tr.get("val_check_interval", 500)
+    datamodule.setup("fit")
+    n_batches = len(datamodule.data_train) // int(cfg.datas.get("batch_size", 1))
+    limit_train = (n_batches // accum) * accum if accum > 1 and n_batches >= accum else 1.0
+    if limit_train != 1.0:
+        log.info("[trainer] %d batches/epoch trimmed to %d so accumulation windows never straddle epochs "
+                 "(step counts stay aligned with val_check_interval)", n_batches, limit_train)
     trainer = pl.Trainer(
         max_steps=int(tr.max_steps), accelerator=accel, devices=1, precision=precision,
         accumulate_grad_batches=accum, gradient_clip_val=float(tr.get("grad_clip", 1.0)) or None,
-        val_check_interval=int(vci) * accum, check_val_every_n_epoch=None,
+        val_check_interval=int(vci) * accum, check_val_every_n_epoch=None, limit_train_batches=limit_train,
         limit_val_batches=float(tr.get("limit_val_batches", 1.0)), num_sanity_val_steps=0,
         callbacks=callbacks, logger=logger, enable_progress_bar=False, enable_model_summary=False,
         default_root_dir=run_dir, log_every_n_steps=int(tr.get("log_every_n_steps", 10)))
