@@ -8,7 +8,7 @@ import re
 import pytorch_lightning as pl
 import torch
 
-from universr import metrics as M
+from universr import diagnose, metrics as M
 from universr.flow.loss import band_weight_vector, flow_matching_loss
 from universr.flow.path import OriginalCFMPath
 from universr.sampling import hz_to_cutoff_bins, restore_long, to_spec
@@ -69,6 +69,10 @@ class UniverSRSystem(pl.LightningModule):
             persistent=False,
         )
 
+        self._diag_done = False
+        self._bad_steps = 0
+        self._last_ctx = None
+
         self._ema = None
         self._ema_pending = None
         self._ema_last_step = -1
@@ -106,15 +110,31 @@ class UniverSRSystem(pl.LightningModule):
         else:
             x0 = torch.randn(Z_hr.shape, device=Z.device, generator=generator)
         xt = self.path.sample_xt(x0, Z_hr, t)
-        out = self.audio_model(xt, t, Y, self._bins(cutoff_hz))
+        bins = self._bins(cutoff_hz)
+        self._last_ctx = (xt.detach(), t.detach(), Y.detach(), bins, {"hq": hq, "lq": lq, "Z": Z})
+        out = self.audio_model(xt, t, Y, bins)
         target = self.path.get_target_vector_field(xt, x0, Z_hr, t)
         return flow_matching_loss(out, target, self.band_w)
 
     def training_step(self, batch, batch_idx):
         hq, lq, cutoff_hz = batch
         loss = self._cfm_loss(hq, lq, cutoff_hz)
+        self._check_finite(loss)
         self.log("train_loss", loss, on_step=True, prog_bar=True, logger=True, batch_size=hq.shape[0])
         return loss
+
+    def _check_finite(self, loss):
+        if bool(torch.isfinite(loss.detach())):
+            self._bad_steps = 0
+            return
+        self._bad_steps += 1
+        if not self._diag_done and self._last_ctx is not None:
+            self._diag_done = True
+            xt, t, Y, bins, extra = self._last_ctx
+            log.warning("[nan-diag] non-finite loss at step %d, tracing one forward", self.global_step)
+            diagnose.run(self.audio_model, xt, t, Y, bins, extra)
+        if self._bad_steps >= 25:
+            raise RuntimeError("25 consecutive non-finite losses; see [nan-diag] lines above")
 
     def on_train_start(self):
         if self.ema_decay <= 0:

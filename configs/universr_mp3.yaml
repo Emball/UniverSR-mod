@@ -98,6 +98,7 @@ model:
   grad_checkpoint: true    # per-block activation checkpointing; set false for speed if VRAM allows
   fast_ops: true           # fused GRN / LayerNorm, same maths and weights; false = original ops
   channels_last: false     # NHWC memory format for the convs; try true after running tests/bench_gpu.py
+  # fp32_modules: [conditioning_encoder]   # run these submodules in fp32 if [nan-diag] reports an fp16 overflow there
 
 transform:
   window_fn: hann

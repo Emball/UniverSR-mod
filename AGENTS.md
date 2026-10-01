@@ -49,6 +49,8 @@ Fork of woongzip1/UniverSR (MIT, ICASSP 2026): trainable and finetunable on cons
 - Validation restores clips in `system.val_chunk_sec` chunks (4 s); a whole 10 s clip needed ~10 GB VRAM.
 - The first real run on the 2080 Ti: ~0.2 it/s at batch 8, baseline metrics all empty (suspected fp16 overflow in the pretrained net, unconfirmed), system RAM near 16 GB. The progress line now shows `loss` and `data` (% of time waiting on the dataloader). `tests/bench_gpu.py` times model variants and locates the first non-finite module in fp16.
 
+- Non-finite loss: `system._check_finite` runs `diagnose.run` once (per-module trace under autocast and fp32, plus input checks, logged as `[nan-diag]`) and aborts after 25 consecutive non-finite losses. `model.fp32_modules` (list of submodule paths) runs those modules with autocast off. The conditioning encoder's frequency mean is computed in fp32.
+
 ## Upstream training distribution (keep data matched)
 - Samples are random 32767-sample crops (~0.68 s, `num_samples`) of whole files, one per file per epoch, mean-downmixed to mono. We crop from cached 3 s chunks at 50% overlap (every crop fits inside some chunk) and take a single channel via `stereo_alternation`.
 - Upstream draws one bandwidth per batch; we use a per-sample cutoff in Hz.
