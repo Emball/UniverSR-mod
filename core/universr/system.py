@@ -147,14 +147,18 @@ class UniverSRSystem(pl.LightningModule):
     def _ensure_ema(self):
         if self.ema_decay <= 0:
             return
-        if self._ema is None:
-            self._ema = {n: p.detach().clone() for n, p in self.audio_model.named_parameters()}
-        if self._ema_pending is not None:
-            for n, v in self._ema_pending.items():
-                if n in self._ema and self._ema[n].shape == v.shape:
-                    self._ema[n].copy_(v.to(self._ema[n].device))
-            log.info("EMA restored from checkpoint")
-            self._ema_pending = None
+        with torch.inference_mode(False), torch.no_grad():
+            if self._ema is None:
+                self._ema = {n: p.detach().clone() for n, p in self.audio_model.named_parameters()}
+            for n, t in list(self._ema.items()):
+                if t.is_inference():
+                    self._ema[n] = t.clone()
+            if self._ema_pending is not None:
+                for n, v in self._ema_pending.items():
+                    if n in self._ema and self._ema[n].shape == v.shape:
+                        self._ema[n].copy_(v.to(self._ema[n].device))
+                log.info("EMA restored from checkpoint")
+                self._ema_pending = None
 
     def on_train_start(self):
         if self.ema_decay <= 0:
