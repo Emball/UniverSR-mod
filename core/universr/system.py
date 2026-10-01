@@ -8,7 +8,7 @@ import re
 import pytorch_lightning as pl
 import torch
 
-from universr import diagnose, metrics as M
+from universr import diagnose, memlog, metrics as M
 from universr.flow.loss import band_weight_vector, flow_matching_loss
 from universr.flow.path import OriginalCFMPath
 from universr.sampling import hz_to_cutoff_bins, restore_long, to_spec
@@ -43,6 +43,8 @@ class UniverSRSystem(pl.LightningModule):
         visqol_fraction=1.0,
         keep_lq_below_cutoff="auto",
         lsd_cutoff_hz=None,
+        mem_log=True,
+        mem_log_every=50,
     ):
         super().__init__()
         self.audio_model = model
@@ -60,6 +62,10 @@ class UniverSRSystem(pl.LightningModule):
         self.val_chunk_sec = val_chunk_sec
         self.val_audio_dir = val_audio_dir
         self.val_seed = int(val_seed)
+        self.mem_log = bool(mem_log)
+        self.mem_log_every = int(mem_log_every)
+        self.val_step_override = None
+        self._chunk_t = None
         self.visqol_fraction = max(0.0, min(1.0, float(visqol_fraction)))
         self.lsd_cutoff_hz = None if lsd_cutoff_hz is None else float(lsd_cutoff_hz)
         self.keep_lq = (not model.aligned_input) if keep_lq_below_cutoff == "auto" else bool(keep_lq_below_cutoff)
@@ -138,22 +144,31 @@ class UniverSRSystem(pl.LightningModule):
         if self._bad_steps >= 25:
             raise RuntimeError("25 consecutive non-finite losses; see [nan-diag] lines above")
 
-    def on_train_start(self):
+    def _ensure_ema(self):
         if self.ema_decay <= 0:
             return
-        params = dict(self.audio_model.named_parameters())
-        self._ema = {n: p.detach().clone() for n, p in params.items()}
+        if self._ema is None:
+            self._ema = {n: p.detach().clone() for n, p in self.audio_model.named_parameters()}
         if self._ema_pending is not None:
             for n, v in self._ema_pending.items():
                 if n in self._ema and self._ema[n].shape == v.shape:
                     self._ema[n].copy_(v.to(self._ema[n].device))
             log.info("EMA restored from checkpoint")
             self._ema_pending = None
+
+    def on_train_start(self):
+        if self.ema_decay <= 0:
+            return
+        self._ensure_ema()
         self._ema_last_step = self.global_step
         log.info("EMA enabled, decay=%.5f", self.ema_decay)
+        if self.mem_log:
+            memlog.snap("train start", reset_peak=True)
 
     @torch.no_grad()
     def on_train_batch_end(self, outputs, batch, batch_idx):
+        if self.mem_log and self.mem_log_every > 0 and (self.global_step % self.mem_log_every == 0) and batch_idx % max(1, self.trainer.accumulate_grad_batches) == 0:
+            memlog.snap(f"train step {self.global_step}", reset_peak=True)
         if self._ema is None or self.global_step == self._ema_last_step:
             return
         self._ema_last_step = self.global_step
@@ -181,17 +196,27 @@ class UniverSRSystem(pl.LightningModule):
         return torch.float16 if "16" in p else None
 
     def on_validation_start(self):
+        if self.mem_log:
+            memlog.snap("val start (before ema/empty)", reset_peak=True)
+        if self._ema is None and self._ema_pending is not None:
+            self._ensure_ema()
         self._ema_use(True)
         self._cudnn_bench = torch.backends.cudnn.benchmark
         torch.backends.cudnn.benchmark = False
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        if self.mem_log:
+            memlog.snap("val start (after empty_cache)", reset_peak=True)
 
     def on_validation_end(self):
         self._ema_use(False)
         torch.backends.cudnn.benchmark = getattr(self, "_cudnn_bench", torch.backends.cudnn.benchmark)
+        if self.mem_log:
+            memlog.snap("val end (before empty_cache)")
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        if self.mem_log:
+            memlog.snap("val end (after empty_cache)", reset_peak=True)
 
     def _val_dataset(self):
         dm = getattr(self.trainer, "datamodule", None)
@@ -249,7 +274,14 @@ class UniverSRSystem(pl.LightningModule):
             self._val_next_rotate = step + self._val_rotate_steps
             self._apply_val_window()
 
+    def _chunk_progress(self, done, total):
+        now = time.time()
+        dt = "" if self._chunk_t is None else f" chunk {now - self._chunk_t:.1f}s"
+        self._chunk_t = now
+        memlog.snap(f"  restore {done}/{total}{dt}")
+
     def _restore(self, lq, cutoff_hz, seed, steps=None):
+        self._chunk_t = time.time() if self.mem_log else None
         return restore_long(
             self.audio_model, self.transform, lq, cutoff_hz, self.sample_rate,
             chunk_sec=self.val_chunk_sec,
@@ -258,6 +290,7 @@ class UniverSRSystem(pl.LightningModule):
             keep_lq_below_cutoff=self.keep_lq,
             seed=seed,
             amp_dtype=self._amp_dtype(),
+            progress=self._chunk_progress if self.mem_log else None,
         )
 
     def validation_step(self, batch, batch_idx):
@@ -274,10 +307,14 @@ class UniverSRSystem(pl.LightningModule):
             return None
 
         t0 = time.time()
+        if self.mem_log:
+            memlog.snap(f"clip {song_key} begin")
         est = self._restore(lq, cutoff_hz, self.val_seed + idx).clamp(-1.0, 1.0)
         if hq.is_cuda:
             torch.cuda.synchronize()
         t1 = time.time()
+        if self.mem_log:
+            memlog.snap(f"clip {song_key} sampled")
         if not torch.isfinite(est).all():
             log.warning("val clip %s: restored audio is non-finite (fp16 overflow?) -- its metrics are empty", song_key)
         gen = torch.Generator(device=hq.device)
@@ -292,13 +329,15 @@ class UniverSRSystem(pl.LightningModule):
             "visqol": None,
         }
         t2 = time.time()
+        if self.mem_log:
+            memlog.snap(f"clip {song_key} metrics done")
         if random.Random(self.val_seed + idx).random() < self.visqol_fraction:
             row["visqol"] = M.visqol(est, hq, self.sample_rate)
         self._val_rows.append(row)
         log.info("val clip %s: sample %.1fs, metrics %.1fs, visqol %.1fs", song_key, t1 - t0, t2 - t1, time.time() - t2)
 
         if self.val_audio_dir:
-            out = os.path.join(self.val_audio_dir, f"step_{self.global_step:06d}")
+            out = os.path.join(self.val_audio_dir, f"step_{self.global_step if self.val_step_override is None else self.val_step_override:06d}")
             os.makedirs(out, exist_ok=True)
             from audio_io import save_wav_f32
             for tag, wav in (("LQ", lq), ("HQ", hq), ("Restored", est)):

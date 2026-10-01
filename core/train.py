@@ -36,7 +36,7 @@ log = logging.getLogger("universr.train")
 MODELS_DIR = os.path.join(REPO_ROOT, "models")
 PRETRAINED_NAMES = ("pytorch_model.bin", "universr.bin", "universr.pth", "universr.ckpt")
 HF_REPO = "woongzip1/universr-audio"
-SYSTEM_KEYS = {"sigma_min", "band_weights", "val_ode_steps", "val_guidance", "val_chunk_sec", "val_seed",
+SYSTEM_KEYS = {"sigma_min", "band_weights", "val_ode_steps", "val_guidance", "val_chunk_sec", "val_seed", "mem_log", "mem_log_every",
                "visqol_fraction", "keep_lq_below_cutoff", "lsd_cutoff_hz"}
 
 
@@ -416,6 +416,17 @@ def train(cfg: DictConfig):
             log.warning("[baseline] skipped: %s", e)
     if ckpt_path is not None:
         ckpt_path = reconcile_resume_ckpt(ckpt_path, system, run_dir)
+        if not val_disabled:
+            try:
+                resume_step = int(torch.load(ckpt_path, map_location="cpu", weights_only=False).get("global_step", 0))
+                system.val_step_override = resume_step
+                log.info("[resume] validating checkpoint at step %d before training", resume_step)
+                datamodule.setup("fit")
+                trainer.validate(system, datamodule=datamodule, ckpt_path=ckpt_path, verbose=False)
+            except Exception as e:
+                log.warning("[resume] pre-training validation failed: %s", e)
+            finally:
+                system.val_step_override = None
 
     install_interrupt_handler(interrupt)
     try:

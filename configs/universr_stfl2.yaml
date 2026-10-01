@@ -127,6 +127,8 @@ system:
   val_ode_steps: 4
   val_guidance: 1.5
   val_chunk_sec: 4.0       # restore validation clips in 4 s overlapped chunks; a whole 10 s clip needs ~10 GB of VRAM
+  mem_log: true            # [mem] lines: torch alloc/reserved/peak, driver VRAM, allocator retries, RSS, at train/val/chunk points
+  mem_log_every: 50        # optimizer steps between [mem] lines while training (0 = off)
   val_seed: 1234
   visqol_fraction: 1.0
   keep_lq_below_cutoff: auto   # auto: keep real bins below the cutoff in arm B, regenerate them in arm C
