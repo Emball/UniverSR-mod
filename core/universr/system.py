@@ -268,7 +268,7 @@ class UniverSRSystem(pl.LightningModule):
 
         if visqol is not None and visqol > self._val_window_best.get("visqol", float("-inf")):
             self._val_window_best["visqol"] = visqol
-        if hfnr is not None and hfnr > self._val_window_best.get("hfnr", float("-inf")):
+        if hfnr is not None and hfnr < self._val_window_best.get("hfnr", float("inf")):
             self._val_window_best["hfnr"] = hfnr
 
         self.log("sisdr", float(sisdr) if sisdr is not None else -100.0, prog_bar=True, logger=True)
