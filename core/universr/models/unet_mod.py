@@ -29,17 +29,24 @@ def hz_to_bins(hz, sample_rate, n_fft):
     return hz * n_fft / sample_rate
 
 
+DEFAULT_FP32_MODULES = ("encoders.3.blocks", "midcoder")
+_FP32_CLASSES = {}
+
+
 def force_fp32(module):
-    """Run a module with autocast off and floating inputs cast to fp32 (guards fp16 overflow)."""
-    fwd = module.forward
-
-    def wrapped(*args, **kwargs):
-        dev = next((a.device.type for a in args if torch.is_tensor(a)), "cuda")
-        args = tuple(a.float() if torch.is_tensor(a) and a.is_floating_point() else a for a in args)
-        with torch.autocast(device_type=dev, enabled=False):
-            return fwd(*args, **kwargs)
-
-    module.forward = wrapped
+    """Run a module with autocast off and floating inputs cast to fp32 (the pretrained net overflows fp16
+    around encoders.3). Done by swapping the class so deepcopy keeps working."""
+    cls = type(module)
+    if getattr(cls, "_fp32", False):
+        return
+    if cls not in _FP32_CLASSES:
+        def forward(self, *args, **kwargs):
+            dev = next((a.device.type for a in args if torch.is_tensor(a)), "cuda")
+            args = tuple(a.float() if torch.is_tensor(a) and a.is_floating_point() else a for a in args)
+            with torch.autocast(device_type=dev, enabled=False):
+                return cls.forward(self, *args, **kwargs)
+        _FP32_CLASSES[cls] = type("FP32" + cls.__name__, (cls,), {"forward": forward, "_fp32": True})
+    module.__class__ = _FP32_CLASSES[cls]
 
 
 def _run(module, ckpt, *args):
@@ -117,7 +124,7 @@ class ConvNeXtUNetCondMod(ConditionalVectorFieldModel):
                  feature_enc_layers=10, cond_dropout_prob=0.1,
                  bw_anchor_bins=PRETRAINED_ANCHOR_BINS,
                  aligned_input=False, grad_checkpoint=False, fast_ops=True, channels_last=False,
-                 fp32_modules=()):
+                 fp32_modules=None):
         super().__init__()
         dims, depths = list(dims), list(depths)
         self.strides = 2 ** len(dims)
@@ -168,9 +175,12 @@ class ConvNeXtUNetCondMod(ConditionalVectorFieldModel):
                     m.__class__ = FastLayerNorm
         if self.channels_last:
             self.to(memory_format=torch.channels_last)
-        for name in (fp32_modules or ()):
-            force_fp32(self.get_submodule(str(name)))
-            log.info("fp32 module: %s", name)
+        names = DEFAULT_FP32_MODULES if fp32_modules is None else tuple(fp32_modules)
+        for name in names:
+            leaves = [m for m in self.get_submodule(str(name)).modules() if not any(True for _ in m.children())]
+            for m in leaves:
+                force_fp32(m)
+            log.info("fp32 module: %s (%d leaf modules)", name, len(leaves))
         log.info("model built: gen_bins=%d (start %d) anchors=%s aligned=%s ckpt=%s params=%.2fM",
                  self.hr_freq_bins, gen_start_bin, self.bw_anchor_bins, aligned_input,
                  grad_checkpoint, sum(p.numel() for p in self.parameters()) / 1e6)
