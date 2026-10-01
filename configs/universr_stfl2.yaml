@@ -27,7 +27,7 @@ training:
   # Apollo froze its first 4 of 6 layers. Here the two high-resolution encoder stages are frozen,
   # which also saves grads and optimizer state. init_conv (the new aligned channels) and the
   # bandwidth embedding stay trainable. Set to [] to train everything.
-  freeze: ["encoders.0.", "encoders.1."]
+  freeze: []               # nothing frozen; list name prefixes (e.g. "encoders.0.") to freeze
   val_songs: 6
   val_rotate_every: 20000  # steps
   val_check_interval: 200  # optimizer steps

@@ -28,7 +28,7 @@ training:
   # U-Net and training what is new or conditioning-side: init_conv (aligned channels), bandwidth
   # embedding, conditioning encoder, FiLM and final_conv. If that proves too little capacity, use
   # ["encoders.0.", "encoders.1."] (as universr_stfl2.yaml) or [] to train everything.
-  freeze: ["encoders.", "midcoder.", "decoders."]
+  freeze: []               # nothing frozen; list name prefixes (e.g. "encoders.0.") to freeze
   val_songs: 6
   val_rotate_every: 20000
   val_check_interval: 200  # optimizer steps, as the Apollo config
