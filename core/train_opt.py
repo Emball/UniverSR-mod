@@ -1,6 +1,7 @@
 import logging
 import math
 import os
+import sys
 import threading
 import time
 from collections import defaultdict
@@ -24,6 +25,8 @@ def apply_optimizations(opt_cfg, repo_root):
         os.makedirs(cache_dir, exist_ok=True)
         os.environ["TRITON_CACHE_DIR"] = cache_dir
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    if opt_cfg.get("expandable_segments", False) and sys.platform != "win32":
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     log.info("[optimizations] tf32=%s cudnn_benchmark=%s", tf32, torch.backends.cudnn.benchmark)
     start_ram_watchdog(float(opt_cfg.get("ram_limit_fraction", 0.90)))
 

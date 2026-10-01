@@ -174,11 +174,24 @@ class UniverSRSystem(pl.LightningModule):
         self._ema_swap()
         self._ema_active = active
 
+    def _amp_dtype(self):
+        p = str(getattr(self.trainer, "precision", ""))
+        if "bf16" in p:
+            return torch.bfloat16
+        return torch.float16 if "16" in p else None
+
     def on_validation_start(self):
         self._ema_use(True)
+        self._cudnn_bench = torch.backends.cudnn.benchmark
+        torch.backends.cudnn.benchmark = False
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def on_validation_end(self):
         self._ema_use(False)
+        torch.backends.cudnn.benchmark = getattr(self, "_cudnn_bench", torch.backends.cudnn.benchmark)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _val_dataset(self):
         dm = getattr(self.trainer, "datamodule", None)
@@ -244,6 +257,7 @@ class UniverSRSystem(pl.LightningModule):
             guidance=self.val_guidance,
             keep_lq_below_cutoff=self.keep_lq,
             seed=seed,
+            amp_dtype=self._amp_dtype(),
         )
 
     def validation_step(self, batch, batch_idx):
