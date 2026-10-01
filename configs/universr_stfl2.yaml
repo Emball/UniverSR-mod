@@ -1,5 +1,5 @@
-# UniverSR-mod: MP3 restoration finetune, tuned for RTX 2080 Ti 11 GB / 16 GB RAM.
-# Mapped from Apollo-mod's apollo_stfl2.yaml. Data goes in data/universr_stfl2/{train,val}/{LQ,HQ}.
+# UniverSR-mod: MP3 restoration finetune at native 44.1 kHz, tuned for RTX 2080 Ti 11 GB / 16 GB RAM.
+# Mapped from Apollo-mod's apollo_stfl2.yaml. 44.1 kHz STFT: n_fft 960, hop 480, 480 bins to 22.05 kHz. Data goes in data/universr_stfl2/{train,val}/{LQ,HQ}.
 # Arms: this file is arm C (aligned channels). For arm B set model.aligned_input: false.
 # Arm A (zero-shot) is the baseline pass that train.py runs before step 0 and caches.
 
@@ -9,7 +9,8 @@ exp:
 
 resume: true
 seed: 42
-# Pretrained weights: models/pytorch_model.bin (from woongzip1/universr-audio). Override with --weights_path.
+# Start weights: set to a Lightning checkpoint from the 48 kHz run (EMA weights are loaded, the optimizer starts fresh),
+# e.g. runs/universr_stfl2/<timestamp>/checkpoints/step=....ckpt. null = models/pytorch_model.bin. Ignored when resuming this run.
 weights_path: null
 
 optimizations:
@@ -36,11 +37,11 @@ training:
   eval_clips: 24           # clips per model for core/evaluate.py
 
 datas:
-  sr: 48000                # model's native rate; 44.1 kHz files are resampled once at chunk-cache time
+  sr: 44100                # native rate of the files; nothing is resampled
   segment_sec: 3           # cached chunk length
   overlap: 0.5
-  crop_samples: 32767      # training crop taken from each chunk (~0.68 s, as upstream)
-  batch_size: 4            # 0.68 s crops are small; first knob to turn if VRAM is tight
+  crop_samples: 30719      # training crop taken from each chunk (64 frames, ~0.70 s)
+  batch_size: 6            # ~0.70 s crops; 6 measured ~10 GB reserved on the 2080 Ti, first knob to turn if VRAM is tight
   num_workers: 2
   pin_memory: false
   val_bootstrap_chunks: 15
@@ -90,7 +91,7 @@ model:
   drop_path: 0
   time_dim: 256
   cond_dim: 384
-  total_freq_bins: 512
+  total_freq_bins: 480     # 0 to 22.05 kHz
   feature_enc_layers: 4
   cond_dropout_prob: 0.1
   gen_start_bin: 80        # 80 = pretrained region (step 0 matches the released model); 0 also generates bins 0-79
@@ -102,9 +103,9 @@ model:
 
 transform:
   window_fn: hann
-  n_fft: 1024
-  sampling_rate: 48000
-  hop_length: 512
+  n_fft: 960
+  sampling_rate: 44100
+  hop_length: 480
   alpha: 0.2
   beta: 1
   comp_eps: 0.0001

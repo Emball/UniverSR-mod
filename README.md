@@ -31,7 +31,7 @@ This fork reworks it for fine-tuning on your own LQ/HQ pairs, with the same inte
 **Model**
 - Optional aligned input channels (arm C) give the network the degraded spectrum bin by bin, so it can repair bins inside the LQ band as well as extend it. Arm B keeps upstream's input. Both start from the released weights and produce the same output as the released model at step 0.
 - The first generated bin is configurable.
-- The sample rate, STFT size and bin count are configurable, so files can be trained at their native rate. `configs/universr_44k.yaml` uses a 960-point STFT with 480 bins for 44.1 kHz.
+- The sample rate, STFT size and bin count are configurable, so files can be trained at their native rate. `configs/universr_stfl2.yaml` uses a 960-point STFT with 480 bins for 44.1 kHz.
 
 **Training**
 - fp16 on GPUs before Ampere, bf16 on Ampere and newer.
