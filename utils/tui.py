@@ -1,5 +1,5 @@
 """
-Apollo TUI -- keyboard-navigated launcher for train / inference / utilities.
+UniverSR-mod TUI -- keyboard-navigated launcher for train / inference / utilities.
 
 Navigation: arrow keys or j/k, Enter to select, Escape or q to go back.
 During training: output streams live; press Ctrl+C to stop and return to menu.
@@ -166,11 +166,11 @@ else:
 # ---------------------------------------------------------------------------
 
 BANNER = r"""
-    ___    ____  ____  __    __    ____     __  _______  ____
-   /   |  / __ \/ __ \/ /   / /   / __ \   /  |/  / __ \/ __ \
-  / /| | / /_/ / / / / /   / /   / / / /  / /|_/ / / / / / / /
- / ___ |/ ____/ /_/ / /___/ /___/ /_/ /  / /  / / /_/ / /_/ /
-/_/  |_/_/    \____/_____/_____/\____/  /_/  /_/\____/_____/
+ _   _      _             ___ ___                   _ 
+| | | |_ _ (_)_ _____ _ _/ __| _ \___ _ __  ___  __| |
+| |_| | ' \| \ V / -_) '_\__ \   /___| '  \/ _ \/ _` |
+ \___/|_||_|_|\_/\___|_| |___/_|_\   |_|_|_\___/\__,_|
+                                                      
 """
 
 # ---------------------------------------------------------------------------
@@ -286,10 +286,19 @@ def _pick(title: str, items: list[str], hint: str = "", subtitle: str = "", star
 # Config helpers
 # ---------------------------------------------------------------------------
 
+def _is_experiment_config(path: Path) -> bool:
+    """Experiment configs have an `exp` section; reference files such as universr_pretrained.yaml do not."""
+    try:
+        data = __import__("yaml").safe_load(path.read_text())
+        return isinstance(data, dict) and "exp" in data
+    except Exception:
+        return False
+
+
 def _list_configs() -> list[Path]:
     if not CONFIGS_DIR.exists():
         return []
-    configs = list(CONFIGS_DIR.glob("*.yaml"))
+    configs = [p for p in CONFIGS_DIR.glob("*.yaml") if _is_experiment_config(p)]
     if os.environ.get("UNIVERSR_DEV") and DEV_CONFIGS_DIR.exists():
         configs += [p for p in DEV_CONFIGS_DIR.glob("*.yaml") if p.name != "AGENTS.md"]
     return sorted(configs, key=lambda p: p.stem)
@@ -488,19 +497,12 @@ def _run_mid_training_inference(state: dict, cfg_path: Path, pause_file: Path) -
     m = _re2.search(r"visqol=(-?[\d.]+)", stem)
     visqol_str = f"visqol={float(m.group(1)):.3f}" if (m and float(m.group(1)) >= 0) else ""
 
-    try:
-        cfg_data = __import__("yaml").safe_load(cfg_path.read_text())
-        feature_dim = cfg_data.get("model", {}).get("feature_dim", 256)
-    except Exception:
-        feature_dim = 384
-
     cmd = [
         _python_bin(), str(ROOT / "core" / "inference.py"),
         "--in_wav",    input_path,
         "--out_wav",   output_path,
         "--weights",   str(latest_ckpt),
         "--conf_dir",  str(cfg_path),
-        "--feature_dim", str(feature_dim),
     ]
 
     console.print(f"\n[cyan]Checkpoint:[/] {latest_ckpt.name}  {visqol_str}")
@@ -788,7 +790,7 @@ def _pick_ensemble(state: dict, cfg_stem: str) -> tuple:
     options = [
         "No ensemble  (model output only)",
         "Low-end preserve  (max_fft below 700 Hz)",
-        "Low-end preserve + transition blend  (max_fft <700 Hz, avg 15-22 kHz, weight 0.6)",
+        "Low-end preserve + transition blend  (max_fft <700 Hz, avg 15-24 kHz, weight 0.6)",
         "Custom  (enter JSON band spec)",
     ]
 
@@ -807,7 +809,7 @@ def _pick_ensemble(state: dict, cfg_stem: str) -> tuple:
     if idx == 2:
         bands = [
             {"lo": 0,     "hi": 700,   "mode": "max_fft", "weight": 1.0},
-            {"lo": 15000, "hi": 22050, "mode": "avg",     "weight": 0.6},
+            {"lo": 15000, "hi": 24000, "mode": "avg",     "weight": 0.6},
         ]
         return ["--ensemble", _json.dumps(bands)], "low-end + transition blend"
 
@@ -825,6 +827,60 @@ def _pick_ensemble(state: dict, cfg_stem: str) -> tuple:
         console.print(f"[red]Invalid JSON: {e}[/]")
         console.input("Press Enter.")
         return [], "no ensemble"
+
+
+def _pick_restore_options(state: dict, cfg_stem: str) -> tuple:
+    """Pick UniverSR restoration options (codec cutoff, output rate, noise sharing).
+
+    Returns (extra_flags: list[str], label: str) for core/inference.py.
+    """
+    saved = state.setdefault("inference", {}).setdefault(cfg_stem, {})
+    presets = [
+        "Defaults  (auto-detect cutoff, 48 kHz output, independent noise per channel)",
+        "Defaults + match input sample rate on output",
+        "Advanced  (cutoff, output rate, noise sharing)",
+    ]
+    idx = _pick("Inference -- restoration options", presets,
+                hint="Enter=select  Esc=defaults", start=saved.get("last_restore_idx", 0))
+    if idx is None or idx == 0:
+        return [], "defaults"
+    saved["last_restore_idx"] = idx
+    if idx == 1:
+        return ["--match_input_sr"], "match input rate"
+
+    flags: list[str] = []
+    labels: list[str] = []
+
+    ci = _pick("Inference -- codec cutoff",
+               ["Auto-detect from the input  (recommended)", "Fixed cutoff in Hz"],
+               hint="Enter=select  Esc=auto")
+    if ci == 1:
+        console.clear()
+        console.print(_banner_panel())
+        raw = console.input("[cyan]Cutoff in Hz (e.g. 16000):[/] ").strip()
+        try:
+            hz = float(raw)
+            if not 1000.0 <= hz <= 24000.0:
+                raise ValueError("expected a value between 1000 and 24000")
+            flags += ["--cutoff_hz", f"{hz:g}"]
+            labels.append(f"cutoff {hz:g} Hz")
+        except ValueError as e:
+            console.print(f"[red]Invalid cutoff ({e}) -- using auto-detect.[/]")
+            console.input("Press Enter.")
+
+    oi = _pick("Inference -- output sample rate",
+               ["Native 48 kHz", "Match input sample rate"], hint="Enter=select  Esc=native")
+    if oi == 1:
+        flags.append("--match_input_sr")
+        labels.append("match input rate")
+
+    ni = _pick("Inference -- noise for L and R",
+               ["Independent per channel", "Shared across channels"], hint="Enter=select  Esc=independent")
+    if ni == 1:
+        flags.append("--shared_noise")
+        labels.append("shared noise")
+
+    return flags, ", ".join(labels) or "defaults"
 
 
 def screen_inference(state: dict) -> None:
@@ -906,6 +962,9 @@ def screen_inference(state: dict) -> None:
 
     # Pick ensemble options (applies to both single and batch)
     ensemble_flags, ensemble_label = _pick_ensemble(state, cfg_stem)
+    restore_flags, restore_label = _pick_restore_options(state, cfg_stem)
+    ensemble_flags = ensemble_flags + restore_flags
+    ensemble_label = f"{ensemble_label}; {restore_label}"
     _save_state(state)
 
     # --- Batch mode: process all files in /input ---
@@ -1101,7 +1160,7 @@ def screen_utilities(state: dict) -> None:
             "View training runs",
             "Degrade audio",
             "Align audio",
-            "Update Apollo",
+            "Update UniverSR-mod",
             "Back",
         ]
         idx = _pick("Utilities", items, hint="Enter=select  Esc=back")
