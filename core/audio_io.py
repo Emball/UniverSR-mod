@@ -88,3 +88,11 @@ def load_audio(path: str, sr: int, cache_dir: str, trim_samples: int = 0) -> tor
 
 def save_wav_f32(tensor: torch.Tensor, path: str, sr: int) -> None:
     torchaudio.save(path, tensor.float().cpu(), sr, encoding="PCM_F", bits_per_sample=32)
+
+
+def peak_normalize_pair(lq: torch.Tensor, hq: torch.Tensor, target_dbfs: float):
+    peak = max(lq.abs().max().item(), hq.abs().max().item())
+    if peak < 1e-4:
+        return lq, hq
+    scale = (10 ** (target_dbfs / 20.0)) / peak
+    return lq * scale, hq * scale

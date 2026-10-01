@@ -46,11 +46,8 @@ def load_wav(path: str, target_sr: int = SR) -> torch.Tensor:
     return wav
 
 
-def peak_normalize_pair(lq: torch.Tensor, hq: torch.Tensor, target_dbfs: float):
-    peak = max(lq.abs().max().item(), hq.abs().max().item())
-    if peak < 1e-4:
-        return lq, hq
-    scale = (10 ** (target_dbfs / 20.0)) / peak
+def apply_level(lq: torch.Tensor, hq: torch.Tensor, target_dbfs: float, cache_dbfs: float):
+    scale = 10 ** ((target_dbfs - cache_dbfs) / 20.0)
     return lq * scale, hq * scale
 
 
@@ -93,7 +90,9 @@ class ChunkedPairDataset(Dataset):
         cutoff_hz: CutoffSpec = "auto",
         train_peak_dbfs: Optional[Sequence[float]] = (-6.0, -1.0),
         val_peak_dbfs: Optional[float] = -3.0,
+        cache_peak_dbfs: float = -1.0,
     ):
+        self.cache_peak_dbfs = cache_peak_dbfs
         self._is_val = label == "Validation"
         self.pairs = get_matched_pairs(os.path.join(chunks_dir, "LQ"), os.path.join(chunks_dir, "HQ"))
         self.sr = sr
@@ -139,7 +138,7 @@ class ChunkedPairDataset(Dataset):
             ch = min(idx % 2, lq.shape[0] - 1)
             lq, hq = lq[ch:ch + 1], hq[ch:ch + 1]
             if self.val_peak_dbfs is not None:
-                lq, hq = peak_normalize_pair(lq, hq, self.val_peak_dbfs)
+                lq, hq = apply_level(lq, hq, self.val_peak_dbfs, self.cache_peak_dbfs)
             cut = _cutoff_tensor(self.cutoff_hz, lq, self.sr, np.random.default_rng(idx))
             song_key = os.path.splitext(os.path.basename(lq_path))[0]
             return hq, lq, idx, song_key, cut
@@ -149,7 +148,7 @@ class ChunkedPairDataset(Dataset):
         if self.crop_samples:
             lq, hq = random_crop_pair(lq, hq, self.crop_samples)
         if self.train_peak_dbfs:
-            lq, hq = peak_normalize_pair(lq, hq, random.uniform(*self.train_peak_dbfs))
+            lq, hq = apply_level(lq, hq, random.uniform(*self.train_peak_dbfs), self.cache_peak_dbfs)
         return hq, lq, cut
 
 
@@ -161,7 +160,9 @@ class FullLengthPairDataset(Dataset):
         segment_sec: float = 2.0,
         cutoff_hz: CutoffSpec = "auto",
         val_peak_dbfs: Optional[float] = -3.0,
+        cache_peak_dbfs: float = -1.0,
     ):
+        self.cache_peak_dbfs = cache_peak_dbfs
         self.pairs = get_matched_pairs(os.path.join(eval_dir, "LQ"), os.path.join(eval_dir, "HQ"))
         self.sr = sr
         self.segment_samples = int(segment_sec * sr)
@@ -192,7 +193,7 @@ class FullLengthPairDataset(Dataset):
         ch = min(pair_idx % 2, lq.shape[0] - 1)
         lq, hq = lq[ch:ch + 1], hq[min(ch, hq.shape[0] - 1):min(ch, hq.shape[0] - 1) + 1]
         if self.val_peak_dbfs is not None:
-            lq, hq = peak_normalize_pair(lq, hq, self.val_peak_dbfs)
+            lq, hq = apply_level(lq, hq, self.val_peak_dbfs, self.cache_peak_dbfs)
         cut = _cutoff_tensor(self.cutoff_hz, lq, self.sr, np.random.default_rng(idx))
         song_key = os.path.splitext(os.path.basename(lq_path))[0]
         return hq, lq, idx, song_key, cut
@@ -213,6 +214,7 @@ class PairedAudioDataModule(LightningDataModule):
         cutoff_hz: CutoffSpec = "auto",
         train_peak_dbfs: Optional[Sequence[float]] = (-6.0, -1.0),
         val_peak_dbfs: Optional[float] = -3.0,
+        cache_peak_dbfs: float = -1.0,
         val_bootstrap_chunks: int = 50,
         **kwargs,
     ):
@@ -229,6 +231,7 @@ class PairedAudioDataModule(LightningDataModule):
         self.cutoff_hz = cutoff_hz
         self.train_peak_dbfs = train_peak_dbfs
         self.val_peak_dbfs = val_peak_dbfs
+        self.cache_peak_dbfs = cache_peak_dbfs
         self.val_bootstrap_chunks = val_bootstrap_chunks
         self.data_train: Optional[Dataset] = None
         self.data_val: Optional[Dataset] = None
@@ -237,11 +240,12 @@ class PairedAudioDataModule(LightningDataModule):
         if self.data_train is None:
             self.data_train = ChunkedPairDataset(
                 self.train_dir, self.sr, self.aug_cfg, "Training",
-                self.crop_samples, self.cutoff_hz, self.train_peak_dbfs, self.val_peak_dbfs)
+                self.crop_samples, self.cutoff_hz, self.train_peak_dbfs, self.val_peak_dbfs,
+                self.cache_peak_dbfs)
         if self.data_val is None:
             self.data_val = ChunkedPairDataset(
                 self.eval_dir, self.sr, None, "Validation",
-                None, self.cutoff_hz, None, self.val_peak_dbfs)
+                None, self.cutoff_hz, None, self.val_peak_dbfs, self.cache_peak_dbfs)
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

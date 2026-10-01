@@ -13,7 +13,7 @@ from typing import Callable, List, Optional
 import torch
 from omegaconf import DictConfig, OmegaConf, open_dict
 
-from audio_io import SUPPORTED_EXTS, decode_to_wav_cache, load_audio, save_wav_f32
+from audio_io import SUPPORTED_EXTS, decode_to_wav_cache, load_audio, peak_normalize_pair, save_wav_f32
 from augment import build_cached_aug_fn
 
 log = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ class PrepCfg:
     chunk_sec: float = 3.0
     overlap: float = 0.5
     fixed_delay: Optional[int] = None
+    cache_peak_dbfs: float = -1.0
     cached_aug_fn: Optional[Callable] = None
 
     @property
@@ -58,6 +59,7 @@ class PrepCfg:
             "segment_sec": self.chunk_sec,
             "overlap": self.overlap,
             "fixed_delay": str(self.fixed_delay),
+            "cache_peak_dbfs": self.cache_peak_dbfs,
         }
 
 
@@ -170,9 +172,7 @@ def slice_and_save(lq: torch.Tensor, hq: torch.Tensor, stem: str, lq_out: str, h
     n = min(lq.shape[-1], hq.shape[-1])
     lq, hq = lq[:, :n], hq[:, :n]
 
-    peak = max(lq.abs().max().item(), hq.abs().max().item())
-    if peak > 1.0:
-        lq, hq = lq / peak, hq / peak
+    lq, hq = peak_normalize_pair(lq, hq, p.cache_peak_dbfs)
 
     cs, hop = p.chunk_samples, p.hop_samples
     total = max(0, (n - cs) // hop + 1)
@@ -300,7 +300,7 @@ def extract_val_clips(src_root: str, dst_root: str, p: PrepCfg, clip_sec: float 
         lq = load_audio(os.path.join(lq_src, lq_files[stem]), p.sr, DECODE_DIR, p.lq_trim)
         hq = load_audio(os.path.join(hq_src, hq_files[stem]), p.sr, DECODE_DIR, p.hq_trim)
         m = min(lq.shape[-1], hq.shape[-1])
-        lq, hq = lq[:, :m], hq[:, :m]
+        lq, hq = peak_normalize_pair(lq[:, :m], hq[:, :m], p.cache_peak_dbfs)
 
         starts = _pick_two_rms_clips(hq.mean(dim=0), clip_samples, p.sr)
         for k, s in enumerate(starts):
@@ -370,6 +370,7 @@ def prepare_data(cfg: DictConfig) -> None:
         chunk_sec=float(getattr(datas, "segment_sec", 3.0)),
         overlap=float(getattr(datas, "overlap", 0.5)),
         fixed_delay=fixed_delay,
+        cache_peak_dbfs=float(getattr(datas, "cache_peak_dbfs", -1.0)),
         cached_aug_fn=build_cached_aug_fn(cached_raw, sr),
     )
 
