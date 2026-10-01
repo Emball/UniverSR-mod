@@ -25,7 +25,7 @@ Fork of woongzip1/UniverSR (MIT, ICASSP 2026): trainable and finetunable on cons
 - Pairs are resampled once at chunk-cache time to 48 kHz (same filter for LQ and HQ); `_SR` is a config value. Output can be resampled back for delivery.
 - Lightning + Hydra shell as in Apollo-mod; backend is `core/universr/` (replaces `core/look2hear/`).
 - Level handling: pair-shared peak normalisation (train: random -6..-1 dBFS; val/inference: -3 dBFS, restored after).
-- Stereo: train on single channels (mono model); inference processes channels independently with optional shared noise. Tested in the arm comparison.
+- Stereo: as Apollo-mod. Training sees single channels via the `stereo_alternation` augmentation (L first half of a song, R second half; skipped when `mid_side_isolation` fires). Inference processes L and R independently and re-stacks them; shared noise across channels is an optional flag, off by default.
 - Conditioning generalised to per-sample bandwidth: embedding interpolated between anchor rows (first four = pretrained rows), masked mean over valid bins.
 - Repair path (arm C): bin-aligned degraded spectrum + validity mask as extra `init_conv` input channels over the generated region, zero-initialised. Generated region can start at bin 80 (default) or 0.
 - Assembly: arm B keeps real bins up to the cutoff; arm C takes generated bins from the generated-region start.
