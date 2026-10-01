@@ -7,8 +7,7 @@
 #   model.aligned_input true     the degraded spectrum is shown bin by bin, so damaged bins inside the LQ band can be repaired
 #   model.gen_start_bin 80       bins below ~3.7 kHz are copied from the LQ; 0 would regenerate them too
 #   transform n_fft/hop/sr       960 / 480 / 44100 with 480 bins: native rate, bin spacing within 2% of the pretrained model
-#   transform.alpha 0.1          harder amplitude compression, so quiet bins count for more in the loss (pretrained: 0.2)
-#   system.alpha_start/steps     slides alpha from the checkpoint's 0.2 to 0.1 over 3000 steps instead of switching at once
+#   transform.alpha 0.2          pretrained value; lowering it (or annealing it) cost quiet-bin level and ViSQOL in testing
 #   system.t_skew 1.5            more training on the clean end of the flow, where fine noise-like detail is learned
 #   system.val_guidance 1.0      plain conditional prediction; 1.5 (upstream) exaggerated the LQ's influence on level
 #   optimizer.lr_mult            3x learning rate on the new aligned channels and the bandwidth embedding
@@ -116,7 +115,7 @@ transform:
   n_fft: 960
   sampling_rate: 44100
   hop_length: 480
-  alpha: 0.1               # pretrained value is 0.2; lower compresses harder so quiet bins weigh more in the loss
+  alpha: 0.2               # pretrained value; changing it shifts the decoded level of quiet bins
   beta: 1
   comp_eps: 0.0001
 
@@ -146,5 +145,5 @@ system:
   lsd_cutoff_hz: 16000     # LSD is measured above this frequency (the model cutoff is full band, so it can't define the region)
   t_skew: 1.5              # flow time t = 1-(1-u)^p, u uniform; p > 1 spends more training on the clean end (fine detail), 1 = uniform
   aux_logmag_weight: 0.0   # weight of a log-magnitude loss on the one-step clean estimate; 0 = off. At 0.1 the restored high band came out ~19 dB above HQ in testing
-  alpha_start: 0.2           # compression exponent the anneal starts from (the checkpoint's); null = no anneal
-  alpha_anneal_steps: 3000    # steps to slide from alpha_start to transform.alpha, counted from the step a run starts or resumes at
+  alpha_start: null          # compression exponent the anneal starts from (the checkpoint's); null = no anneal
+  alpha_anneal_steps: 0      # steps to slide from alpha_start to transform.alpha, counted from the step a run starts or resumes at
