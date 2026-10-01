@@ -110,6 +110,8 @@ class UniverSRSystem(pl.LightningModule):
         self._last_val_visqol = None
         self._last_val_lsd = None
         self._baseline = None
+        self._collect_lq = False
+        self._lq_rows = []
 
     def forward(self, x, t, y, cutoff_bins):
         return self.audio_model(x, t, y, cutoff_bins)
@@ -301,6 +303,7 @@ class UniverSRSystem(pl.LightningModule):
 
     def on_validation_epoch_start(self):
         self._val_rows = []
+        self._lq_rows = []
         if not self._val_all_songs:
             self._lock_val_songs()
         if self.trainer.sanity_checking or not self._val_rotate_steps or len(self._val_all_songs) <= self.val_songs:
@@ -383,6 +386,18 @@ class UniverSRSystem(pl.LightningModule):
         if random.Random(self.val_seed + idx).random() < self.visqol_fraction:
             row["visqol"] = M.visqol(est, hq, self.sample_rate)
         self._val_rows.append(row)
+        if self._collect_lq:
+            lq_est = lq.clamp(-1.0, 1.0)
+            lq_row = {
+                "sisdr": M.sisdr(lq_est, hq),
+                "hfnr": M.hfnr(lq_est, hq, self.sample_rate),
+                "lsd_high": M.lsd(lq_est, hq, self.lsd_cutoff_hz or float(cutoff_hz[0]), self.sample_rate)[1],
+                "visqol": None,
+                "bands": M.band_db(lq_est, hq, self.sample_rate),
+            }
+            if row["visqol"] is not None:
+                lq_row["visqol"] = M.visqol(lq_est, hq, self.sample_rate)
+            self._lq_rows.append(lq_row)
         log.info("val clip %s: sample %.1fs, metrics %.1fs, visqol %.1fs", song_key, t1 - t0, t2 - t1, time.time() - t2)
 
         if self.val_audio_dir:
@@ -428,10 +443,29 @@ class UniverSRSystem(pl.LightningModule):
             if bands[-1] is not None:
                 self.log(f"band_db_{i}", float(bands[-1]), logger=True)
         base = self._baseline or {}
-        parts = [f"{lab}={v:+.1f}" + (f" (base {base[f'band_db_{i}']:+.1f})" if f"band_db_{i}" in base else "")
-                 for i, (lab, v) in enumerate(zip(M.BAND_LABELS, bands)) if v is not None]
+        def ref(i):
+            r = [f"base {base[f'band_db_{i}']:+.1f}"] if f"band_db_{i}" in base else []
+            if f"lq_band_db_{i}" in base:
+                r.append(f"lq {base[f'lq_band_db_{i}']:+.1f}")
+            return f" ({', '.join(r)})" if r else ""
+        parts = [f"{lab}={v:+.1f}" + ref(i) for i, (lab, v) in enumerate(zip(M.BAND_LABELS, bands)) if v is not None]
         if parts:
             print(f"\n[bands] restored minus HQ, dB:  {'  '.join(parts)}  (alpha {self.current_alpha():.3f})", flush=True)
+        if self._collect_lq and self._lq_rows:
+            def lmean(key):
+                vals = [r[key] for r in self._lq_rows if r[key] is not None and not math.isnan(r[key])]
+                return sum(vals) / len(vals) if vals else None
+            lq_vals = {f"lq_{k}": lmean(k) for k in ("visqol", "sisdr", "hfnr", "lsd_high")}
+            for i in range(len(M.BAND_LABELS)):
+                vals = [r["bands"][i] for r in self._lq_rows if not math.isnan(r["bands"][i])]
+                lq_vals[f"lq_band_db_{i}"] = sum(vals) / len(vals) if vals else None
+            for k, v in lq_vals.items():
+                if v is not None:
+                    self.log(k, float(v), logger=False)
+            shown = "  ".join(f"{k[3:]}={v:.3f}" for k, v in lq_vals.items() if v is not None and not k.startswith("lq_band"))
+            bshown = "  ".join(f"{lab}={lq_vals[f'lq_band_db_{i}']:+.1f}" for i, lab in enumerate(M.BAND_LABELS)
+                               if lq_vals.get(f"lq_band_db_{i}") is not None)
+            print(f"\n[lq] unrestored LQ vs HQ:  {shown}\n[lq] bands, dB:  {bshown}", flush=True)
         if self.optimizer is not None:
             self.log("lr", self.optimizer.param_groups[0]["lr"], prog_bar=True)
         log.info("val: %d clips, songs=%s", len(self._val_rows), getattr(self, "_active_songs", []))

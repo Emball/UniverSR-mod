@@ -148,11 +148,16 @@ def run_baseline(trainer, system, datamodule, key):
             os.remove(cache_file)
     audio_dir = os.path.join(system.val_audio_dir, "step_000000") if system.val_audio_dir else None
     need_audio = bool(audio_dir) and not os.path.isdir(audio_dir)
-    if bl is None or need_audio:
+    need_lq = bl is not None and not any(k.startswith("lq_") for k in bl)
+    if bl is None or need_audio or need_lq:
         log.info("[baseline] evaluating pretrained weights%s", " (saving audio)" if bl is not None else "")
         datamodule.setup("fit")
-        res = trainer.validate(system, datamodule=datamodule, verbose=False)
-        if bl is None:
+        system._collect_lq = True
+        try:
+            res = trainer.validate(system, datamodule=datamodule, verbose=False)
+        finally:
+            system._collect_lq = False
+        if bl is None or need_lq:
             if not res:
                 return
             bl = {k: float(v) for k, v in res[0].items() if v is not None}
@@ -162,7 +167,8 @@ def run_baseline(trainer, system, datamodule, key):
                 os.makedirs(cache_dir, exist_ok=True)
                 with open(cache_file, "w") as f:
                     json.dump(bl, f, indent=2)
-    system._baseline = {k: float(bl[k]) for k in ("visqol", "sisdr", "hfnr", "lsd_high", "band_db_0", "band_db_1", "band_db_2", "band_db_3") if bl.get(k) is not None}
+    ref_keys = ("visqol", "sisdr", "hfnr", "lsd_high", "band_db_0", "band_db_1", "band_db_2", "band_db_3")
+    system._baseline = {k: float(bl[k]) for k in ref_keys + tuple("lq_" + k for k in ref_keys) if bl.get(k) is not None}
     system._last_val_sisdr = bl.get("sisdr")
     system._last_val_hfnr = bl.get("hfnr")
     system._last_val_visqol = bl.get("visqol")
@@ -242,7 +248,8 @@ class StepPrinter(Callback):
                                 ("hfnr", "_last_val_hfnr", "hfnr"), ("lsd", "_last_val_lsd", "lsd_high")):
             v = getattr(m, attr, None)
             if v is not None:
-                b = f" (base {base[bkey]:.3f})" if bkey in base else ""
+                r = ([f"base {base[bkey]:.3f}"] if bkey in base else []) + ([f"lq {base['lq_' + bkey]:.3f}"] if "lq_" + bkey in base else [])
+                b = f" ({', '.join(r)})" if r else ""
                 parts.append(f"{key}={float(v):.3f}{b}")
         return ("  " + "  ".join(parts)) if parts else ""
 
