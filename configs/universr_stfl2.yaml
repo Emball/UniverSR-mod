@@ -1,11 +1,11 @@
 # UniverSR-mod: MP3 restoration finetune, tuned for RTX 2080 Ti 11 GB / 16 GB RAM.
-# Mapped from Apollo-mod's apollo_stfl2.yaml. Data goes in data/universr_mp3/{train,val}/{LQ,HQ}.
+# Mapped from Apollo-mod's apollo_stfl2.yaml. Data goes in data/universr_stfl2/{train,val}/{LQ,HQ}.
 # Arms: this file is arm C (aligned channels). For arm B set model.aligned_input: false.
 # Arm A (zero-shot) is the baseline pass that train.py runs before step 0 and caches.
 
 exp:
   dir: ./runs
-  name: universr_mp3
+  name: universr_stfl2
 
 resume: true
 seed: 42
@@ -30,7 +30,7 @@ training:
   freeze: ["encoders.0.", "encoders.1."]
   val_songs: 6
   val_rotate_every: 20000  # steps
-  val_check_interval: 500  # optimizer steps (Apollo used 100; the ODE sampler makes validation costlier here)
+  val_check_interval: 200  # optimizer steps
   limit_val_batches: 1.0
   log_every_n_steps: 10
   eval_clips: 24           # clips per model for core/evaluate.py
@@ -40,7 +40,7 @@ datas:
   segment_sec: 3           # cached chunk length
   overlap: 0.5
   crop_samples: 32767      # training crop taken from each chunk (~0.68 s, as upstream)
-  batch_size: 8            # 0.68 s crops are small; first knob to turn if VRAM is tight
+  batch_size: 4            # 0.68 s crops are small; first knob to turn if VRAM is tight
   num_workers: 2
   pin_memory: false
   val_bootstrap_chunks: 15

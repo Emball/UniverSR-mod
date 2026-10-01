@@ -1,7 +1,7 @@
 # Smoke tests (run on the GPU machine)
 
 Nothing below has been executed on real hardware. Run in order; stop at the first failure and report the log.
-Config below: `configs/universr_stfl_new.yaml` (or `universr_mp3.yaml`). Data goes in `data/<exp.name>/{train,val}/{LQ,HQ}`.
+Config below: `configs/universr_stfl2.yaml` (or `universr_stfl_new.yaml`). Data goes in `data/<exp.name>/{train,val}/{LQ,HQ}`.
 
 1. **Setup.** Put `pytorch_model.bin` and `config.yaml` from `woongzip1/universr-audio` in `models/`. Run `universr.bat` (or `./universr.sh`): the TUI opens with the UniverSR-mod banner and lists the experiment configs, not `universr_pretrained`.
 2. **CPU unit tests.** `pip install pytest`, then `python -m pytest tests -q --ignore=tests/test_train_e2e.py`. Expect all pass; `test_model_equivalence` is the step-0 check against the released U-Net.

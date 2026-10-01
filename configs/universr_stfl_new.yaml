@@ -27,7 +27,7 @@ training:
   # UniverSR has no extra-layer mechanism, so the closest equivalent is freezing the whole pretrained
   # U-Net and training what is new or conditioning-side: init_conv (aligned channels), bandwidth
   # embedding, conditioning encoder, FiLM and final_conv. If that proves too little capacity, use
-  # ["encoders.0.", "encoders.1."] (as universr_mp3.yaml) or [] to train everything.
+  # ["encoders.0.", "encoders.1."] (as universr_stfl2.yaml) or [] to train everything.
   freeze: ["encoders.", "midcoder.", "decoders."]
   val_songs: 6
   val_rotate_every: 20000

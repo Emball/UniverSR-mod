@@ -120,6 +120,7 @@ def baseline_key(weights_path, eval_dir, model, system, cfg):
 def run_baseline(trainer, system, datamodule, key):
     cache_dir = os.path.join(CACHE_DIR, "baseline")
     cache_file = os.path.join(cache_dir, f"{key}.json")
+    bl = None
     if os.path.isfile(cache_file):
         try:
             with open(cache_file) as f:
@@ -128,22 +129,22 @@ def run_baseline(trainer, system, datamodule, key):
         except Exception as e:
             log.warning("[baseline] cache read failed (%s) -- re-running", e)
             os.remove(cache_file)
-            bl = None
-    else:
-        bl = None
-    if bl is None:
-        log.info("[baseline] evaluating pretrained weights")
+    audio_dir = os.path.join(system.val_audio_dir, "step_000000") if system.val_audio_dir else None
+    need_audio = bool(audio_dir) and not os.path.isdir(audio_dir)
+    if bl is None or need_audio:
+        log.info("[baseline] evaluating pretrained weights%s", " (saving audio)" if bl is not None else "")
         datamodule.setup("fit")
         res = trainer.validate(system, datamodule=datamodule, verbose=False)
-        if not res:
-            return
-        bl = {k: float(v) for k, v in res[0].items() if v is not None}
-        if bl.get("visqol", -1.0) <= -1.0 and bl.get("sisdr", -100.0) <= -100.0:
-            log.warning("[baseline] no valid metrics (restored audio non-finite or empty) -- not cached")
-        else:
-            os.makedirs(cache_dir, exist_ok=True)
-            with open(cache_file, "w") as f:
-                json.dump(bl, f, indent=2)
+        if bl is None:
+            if not res:
+                return
+            bl = {k: float(v) for k, v in res[0].items() if v is not None}
+            if bl.get("visqol", -1.0) <= -1.0 and bl.get("sisdr", -100.0) <= -100.0:
+                log.warning("[baseline] no valid metrics (restored audio non-finite or empty) -- not cached")
+            else:
+                os.makedirs(cache_dir, exist_ok=True)
+                with open(cache_file, "w") as f:
+                    json.dump(bl, f, indent=2)
     system._last_val_sisdr = bl.get("sisdr")
     system._last_val_hfnr = bl.get("hfnr")
     system._last_val_visqol = bl.get("visqol")
@@ -437,7 +438,7 @@ def train(cfg: DictConfig):
 def main():
     setup_logging()
     ap = argparse.ArgumentParser()
-    ap.add_argument("--conf_dir", default="configs/universr_mp3.yaml", help="path to config file")
+    ap.add_argument("--conf_dir", default="configs/universr_stfl2.yaml", help="path to config file")
     ap.add_argument("--weights_path", default=None, help="pretrained weights (.bin/.pth) or a previous .ckpt")
     ap.add_argument("--resume", action="store_true", help="resume the latest run's newest checkpoint")
     args = ap.parse_args()
