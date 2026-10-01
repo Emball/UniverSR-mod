@@ -111,8 +111,34 @@ def test_validate_only_baseline():
         print("  trainer.validate baseline works:", {k: round(v, 2) for k, v in res[0].items() if k != "lr"})
 
 
+def test_checkpoint_not_ema_swapped():
+    from pytorch_lightning.callbacks import Callback, ModelCheckpoint
+
+    class Rec(Callback):
+        def on_validation_start(self, trainer, m):
+            if trainer.sanity_checking or m._ema is None:
+                return
+            self.live = {n: p.detach().clone() for n, p in m.audio_model.named_parameters()}
+            self.ema = {n: v.detach().clone() for n, v in m._ema.items()}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        sysm = make_system(tmp, ema_decay=0.9, val_songs=1, val_rotate_every=100)
+        rec = Rec()
+        ck = ModelCheckpoint(dirpath=tmp, monitor="visqol", mode="max", save_top_k=-1, filename="{step:06d}")
+        trainer(tmp, 4, callbacks=[rec, ck]).fit(sysm, datamodule=DM())
+        c = torch.load(os.path.join(tmp, sorted(f for f in os.listdir(tmp) if f.endswith(".ckpt"))[-1]), weights_only=False)
+        moved = [k for k in rec.live if not torch.allclose(rec.live[k], rec.ema[k])]
+        assert len(moved) > 100
+        for k in moved[:20]:
+            assert torch.allclose(c["state_dict"]["audio_model." + k], rec.live[k]), "state_dict holds EMA weights"
+            assert torch.allclose(c["ema"][k], rec.ema[k]), "ckpt['ema'] holds live weights"
+        assert not sysm._ema_active
+        print(f"  checkpoint holds live weights in state_dict and EMA under 'ema' ({len(moved)} tensors differ)")
+
+
 if __name__ == "__main__":
     test_fit_validate_rotate_resume(False)
     test_fit_validate_rotate_resume(True)
     test_validate_only_baseline()
+    test_checkpoint_not_ema_swapped()
     print("all passed")

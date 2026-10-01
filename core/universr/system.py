@@ -71,6 +71,7 @@ class UniverSRSystem(pl.LightningModule):
         self._ema = None
         self._ema_pending = None
         self._ema_last_step = -1
+        self._ema_active = False
 
         self._val_all_songs = []
         self._val_saved_keys = None
@@ -144,13 +145,17 @@ class UniverSRSystem(pl.LightningModule):
             p.copy_(self._ema[n])
             self._ema[n].copy_(tmp)
 
+    def _ema_use(self, active):
+        if self._ema is None or self._ema_active == active:
+            return
+        self._ema_swap()
+        self._ema_active = active
+
     def on_validation_start(self):
-        if self._ema is not None:
-            self._ema_swap()
+        self._ema_use(True)
 
     def on_validation_end(self):
-        if self._ema is not None:
-            self._ema_swap()
+        self._ema_use(False)
 
     def _val_dataset(self):
         dm = getattr(self.trainer, "datamodule", None)
@@ -256,6 +261,13 @@ class UniverSRSystem(pl.LightningModule):
         return None
 
     def on_validation_epoch_end(self):
+        # live weights must be restored here: checkpoint callbacks run their on_validation_end before the module's
+        try:
+            self._val_epoch_end()
+        finally:
+            self._ema_use(False)
+
+    def _val_epoch_end(self):
         def mean(key):
             vals = [r[key] for r in self._val_rows if r[key] is not None and not math.isnan(r[key])]
             return sum(vals) / len(vals) if vals else None
