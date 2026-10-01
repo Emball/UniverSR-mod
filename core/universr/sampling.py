@@ -66,7 +66,7 @@ def ode_sample(model, y, cutoff_bins, num_frames, steps=4, guidance=1.5, seed=No
         gen.manual_seed(int(seed))
     x = torch.randn(B, 2, model.hr_freq_bins, num_frames, device=dev, generator=gen)
     ts = torch.linspace(0, 1, int(steps) + 1).tolist()
-    use_cfg = guidance is not None and guidance != 0
+    use_cfg = guidance is not None and guidance not in (0, 1)
 
     def field(xt, t):
         tt = torch.full((B,), t, device=dev)

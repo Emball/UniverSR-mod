@@ -12,7 +12,7 @@ Fork of woongzip1/UniverSR (MIT, ICASSP 2026): trainable and finetunable on cons
 - Condition path: low bins -> FiLM(freq pos-emb) -> ConvNeXt blocks -> mean over frequency -> one vector per frame. The U-Net never sees bin-aligned condition.
 - Generated region is always bins 80-511 (432). Upstream discards the part overlapping the condition at assembly.
 - Input bandwidth is a 4-row table (8/12/16/24 kHz -> 80/128/170/256 bins) with a 4-row embedding. MP3 lowpass (16-20 kHz) is beyond the trained range.
-- Trained on peak-normalised audio (random -1 to -6 dBFS), 32767-sample crops; 10% condition dropout for CFG; sampling 4-step midpoint, guidance 1.5.
+- Trained on peak-normalised audio (random -1 to -6 dBFS), 32767-sample crops; 10% condition dropout for CFG; sampling 4-step midpoint, upstream guidance 1.5. Our configs use `system.val_guidance: 1.0` (plain conditional prediction; the unconditional pass is skipped at 1 and at 0, where 0 means guidance off, not unconditional): at 1.5 the extrapolation past the bin-aligned condition added a loud 1-12 kHz band that training never sees.
 
 ## Apollo-mod contract (the TUI depends on it)
 - CLI: `core/train.py --conf_dir X [--resume] [--weights_path P]`, `core/inference.py --in_wav --out_wav --weights --conf_dir`, `core/evaluate.py --conf_dir`.
