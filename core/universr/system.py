@@ -43,7 +43,7 @@ class UniverSRSystem(pl.LightningModule):
         visqol_fraction=1.0,
         keep_lq_below_cutoff="auto",
         lsd_cutoff_hz=None,
-        mem_log=True,
+        mem_log=False,
         mem_log_every=50,
     ):
         super().__init__()
@@ -319,7 +319,11 @@ class UniverSRSystem(pl.LightningModule):
             log.warning("val clip %s: restored audio is non-finite (fp16 overflow?) -- its metrics are empty", song_key)
         gen = torch.Generator(device=hq.device)
         gen.manual_seed(self.val_seed + idx)
-        cfm = float(self._cfm_loss(hq, lq, cutoff_hz, t=torch.full((1, 1, 1, 1), 0.5, device=hq.device), generator=gen))
+        n = hq.shape[-1]
+        crop = int((self.val_chunk_sec or 4.0) * self.sample_rate)
+        lo = max(0, (n - crop) // 2)
+        cfm = float(self._cfm_loss(hq[..., lo:lo + crop], lq[..., lo:lo + crop], cutoff_hz,
+                                   t=torch.full((1, 1, 1, 1), 0.5, device=hq.device), generator=gen))
 
         row = {
             "sisdr": M.sisdr(est, hq),
