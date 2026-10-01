@@ -81,9 +81,9 @@ if defined _RAW_ARGS (
 :: 5. If arguments given, treat first as the script name and run it
 if not "!FILTERED_ARGS!"=="" (
     for /f "tokens=1,* delims= " %%a in ("!FILTERED_ARGS!") do set "CMD=%%a" & set "REST=%%b"
-    if /i "!CMD!"=="train"     set "SCRIPT=train.py"
-    if /i "!CMD!"=="inference" set "SCRIPT=inference.py"
-    if /i "!CMD!"=="test"      set "SCRIPT=test.py"
+    if /i "!CMD!"=="train"     set "SCRIPT=core\train.py"
+    if /i "!CMD!"=="inference" set "SCRIPT=core\inference.py"
+    if /i "!CMD!"=="evaluate"  set "SCRIPT=core\evaluate.py"
     if defined SCRIPT (
         "%VENV_DIR%\Scripts\python.exe" "%SCRIPT_DIR%\!SCRIPT!" !REST!
     ) else if /i "!CMD!"=="python" (

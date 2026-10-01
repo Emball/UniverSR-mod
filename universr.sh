@@ -15,6 +15,12 @@ info() { echo -e "${CYN}[universr]${RST} $*"; }
 ok()   { echo -e "${GRN}[universr]${RST} $*"; }
 die()  { echo -e "${RED}[universr]${RST} $*" >&2; exit 1; }
 
+# 0. Pull latest changes if this is a git checkout
+if [ -d "$SCRIPT_DIR/.git" ] && command -v git &>/dev/null; then
+    info "Checking for updates..."
+    git -C "$SCRIPT_DIR" pull --ff-only || info "WARNING: git pull failed — continuing with local copy."
+fi
+
 # 1. Locate or install uv
 UV_BIN=""
 if   command -v uv &>/dev/null;              then UV_BIN="$(command -v uv)"
@@ -79,20 +85,27 @@ info "Syncing remaining dependencies..."
     -r "$SCRIPT_DIR/requirements.txt"
 ok "dependencies up to date"
 
-# 4. If arguments given, treat first as the script name and run it
+# 4. Strip --dev flag and set env var if present
+ARGS=()
+for a in "$@"; do
+    if [ "$a" = "--dev" ]; then export UNIVERSR_DEV=1; else ARGS+=("$a"); fi
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
+
+# 5. If arguments given, treat first as the script name and run it
 if [ $# -gt 0 ]; then
     CMD="$1"; shift
     case "$CMD" in
         train)     SCRIPT="core/train.py" ;;
         inference) SCRIPT="core/inference.py" ;;
-        test)      SCRIPT="test.py" ;;
+        evaluate)  SCRIPT="core/evaluate.py" ;;
         python)    exec "$VENV_DIR/bin/python" "$@" ;;
         *)         exec "$VENV_DIR/bin/python" "$CMD" "$@" ;;
     esac
     exec "$VENV_DIR/bin/python" "$SCRIPT_DIR/$SCRIPT" "$@"
 fi
 
-# 5. No arguments — launch TUI
+# 6. No arguments — launch TUI
 export VIRTUAL_ENV="$VENV_DIR"
 export PATH="$VENV_DIR/bin:$PATH"
 unset PYTHONHOME

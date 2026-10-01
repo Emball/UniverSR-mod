@@ -422,7 +422,7 @@ def train(cfg: DictConfig):
 def main():
     setup_logging()
     ap = argparse.ArgumentParser()
-    ap.add_argument("--conf_dir", default="configs/universr.yaml", help="path to config file")
+    ap.add_argument("--conf_dir", default="configs/universr_mp3.yaml", help="path to config file")
     ap.add_argument("--weights_path", default=None, help="pretrained weights (.bin/.pth) or a previous .ckpt")
     ap.add_argument("--resume", action="store_true", help="resume the latest run's newest checkpoint")
     args = ap.parse_args()
