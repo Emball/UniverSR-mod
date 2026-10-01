@@ -106,7 +106,7 @@ transform:
   n_fft: 960
   sampling_rate: 44100
   hop_length: 480
-  alpha: 0.2
+  alpha: 0.1               # pretrained value is 0.2; lower compresses harder so quiet bins weigh more in the loss
   beta: 1
   comp_eps: 0.0001
 
