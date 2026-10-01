@@ -1,0 +1,131 @@
+# UniverSR-mod: port of Apollo-mod's apollo_stfl_new.yaml, tuned for RTX 2080 Ti 11 GB / 16 GB RAM.
+# Data goes in data/universr_stfl_new/{train,val}/{LQ,HQ} (data is located by exp.name).
+# Arm C (aligned channels). For arm B set model.aligned_input: false.
+# Not ported: GAN discriminator and its losses, extra_layers, target_band_loss (disabled in the source anyway).
+
+exp:
+  dir: ./runs
+  name: universr_stfl_new
+
+resume: true
+seed: 42
+weights_path: null         # default models/pytorch_model.bin; override with --weights_path
+
+optimizations:
+  tf32: true
+  cudnn_benchmark: true
+  triton_cache: true
+  ram_limit_fraction: 0.98  # expandable_segments is always on in train.py
+
+training:
+  max_steps: 500000
+  grad_accum_steps: 1
+  grad_clip: 1.0
+  precision: auto          # fp16-mixed on Turing, bf16 on Ampere+
+  ema_decay: 0.999
+  # Apollo: n_layers_to_freeze 6 (all pretrained layers) + extra_layers 4 (new trainable layers).
+  # UniverSR has no extra-layer mechanism, so the closest equivalent is freezing the whole pretrained
+  # U-Net and training what is new or conditioning-side: init_conv (aligned channels), bandwidth
+  # embedding, conditioning encoder, FiLM and final_conv. If that proves too little capacity, use
+  # ["encoders.0.", "encoders.1."] (as universr_mp3.yaml) or [] to train everything.
+  freeze: ["encoders.", "midcoder.", "decoders."]
+  val_songs: 6
+  val_rotate_every: 20000
+  val_check_interval: 200  # optimizer steps, as the Apollo config
+  limit_val_batches: 1.0
+  log_every_n_steps: 10
+  eval_clips: 24
+
+datas:
+  sr: 48000                # model's native rate; 44.1 kHz files are resampled once at chunk-cache time
+  segment_sec: 3
+  overlap: 0.5
+  crop_samples: 32767      # ~0.68 s training crop; Apollo batch 2 x 3 s is about 8 x 0.68 s
+  batch_size: 8
+  num_workers: 2
+  pin_memory: false
+  val_bootstrap_chunks: 15
+  align_data: 0
+  cutoff_hz: auto          # per-sample codec lowpass: auto | Hz | [min_hz, max_hz]
+  cache_peak_dbfs: -1.0
+  train_peak_dbfs: [-6.0, -1.0]
+  val_peak_dbfs: -3.0
+  augmentation:
+    live:
+      enabled: true
+      stereo_alternation: {enabled: true, prob: 1.0}
+      mid_side_isolation: {enabled: false, prob_mid: 0.1, prob_side: 0.1}
+      gain: {enabled: true, prob: 0.5, db_max: 1.5}
+      deep_gain: {enabled: true, prob: 0.03, db_min: -10.0, db_max: -6.0}
+      silence_dip:
+        enabled: true
+        prob: 0.05
+        max_hold_sec: 2.0
+        short_ramp_ms: 10.0
+        short_ramp_max_ms: 50.0
+        medium_ramp_ms: 50.0
+        medium_ramp_max_ms: 200.0
+        long_ramp_ms: 200.0
+        long_ramp_max_ms: 1000.0
+      polarity: {enabled: false, prob: 0.5}
+      pitch_shift: {enabled: false, prob: 0.5, semitones_max: 1.5}
+      noise: {enabled: false, prob: 0.5, sigma: 0.002}
+      mp3_degradation: {enabled: false, prob: 0.5, kbps_min: 64, kbps_max: 256}
+    cached:
+      enabled: false
+      cached_variants: 1
+      stereo_alternation: {enabled: false, fraction: 1.0}
+      gain: {enabled: false, fraction: 0.5, db_max: 1.5}
+      polarity: {enabled: false, fraction: 0.5}
+      pitch_shift: {enabled: false, fraction: 0.5, semitones_max: 1.5}
+      noise: {enabled: false, fraction: 0.5, sigma: 0.002}
+      mp3_degradation: {enabled: false, fraction: 0.5, kbps_min: 64, kbps_max: 256}
+
+model:
+  in_channels: 2
+  out_channels: 2
+  dims: [96, 192, 384, 768]
+  depths: [2, 2, 4, 2]
+  drop_path: 0
+  time_dim: 256
+  cond_dim: 384
+  total_freq_bins: 512
+  feature_enc_layers: 4
+  cond_dropout_prob: 0.1
+  gen_start_bin: 80
+  aligned_input: true
+  grad_checkpoint: true    # Apollo gradient_checkpointing: true
+
+transform:
+  window_fn: hann
+  n_fft: 1024
+  sampling_rate: 48000
+  hop_length: 512
+  alpha: 0.2
+  beta: 1
+  comp_eps: 0.0001
+
+optimizer:
+  type: adamw
+  lr: 1.0e-5               # Apollo lr_g (lr_d unused, no discriminator)
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+
+# Apollo StepLR(2, 0.98) steps per epoch there; here the scheduler steps per optimizer step and would
+# collapse the lr, so constant after a short warmup.
+scheduler:
+  type: constant
+  warmup_steps: 200
+
+system:
+  sigma_min: 1.0e-4
+  val_ode_steps: 4
+  val_guidance: 1.5
+  val_chunk_sec: null
+  val_seed: 1234
+  visqol_fraction: 1.0
+  keep_lq_below_cutoff: auto
+  # Apollo band weight: 1 + gain * exp(-0.5 * ((f - center) / sigma)^2), peak 2.5 at 15 kHz.
+  # (Apollo's lo/hi/ramp values only apply to its trapezoid shape and are not used.)
+  band_weights:
+    - {shape: gaussian, center_hz: 15000, sigma_hz: 3000, gain: 1.5}
