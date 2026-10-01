@@ -24,7 +24,7 @@ Fork of woongzip1/UniverSR (MIT, ICASSP 2026): trainable and finetunable on cons
 ## Design decisions
 - Pairs are resampled once at chunk-cache time to 48 kHz (same filter for LQ and HQ); `_SR` is a config value. Output can be resampled back for delivery.
 - Lightning + Hydra shell as in Apollo-mod; backend is `core/universr/` (replaces `core/look2hear/`).
-- Level handling: pair-shared peak normalisation (train: random -6..-1 dBFS; val/inference: -3 dBFS, restored after).
+- Level handling matches upstream (song-level peak, then crop): chunks are cached with the pair-shared song peak at `datas.cache_peak_dbfs` (-1). At load, a relative gain puts the song peak at a random -6..-1 dBFS (train) or -3 dBFS (val); crops are never renormalised, so quiet passages stay quiet. Inference restores the original level.
 - Stereo: as Apollo-mod. Training sees single channels via the `stereo_alternation` augmentation (L first half of a song, R second half; skipped when `mid_side_isolation` fires). Inference processes L and R independently and re-stacks them; shared noise across channels is an optional flag, off by default.
 - Conditioning generalised to per-sample bandwidth: embedding interpolated between anchor rows (first four = pretrained rows), masked mean over valid bins.
 - Repair path (arm C): bin-aligned degraded spectrum + validity mask as extra `init_conv` input channels over the generated region, zero-initialised. Generated region can start at bin 80 (default) or 0.
@@ -43,6 +43,11 @@ Fork of woongzip1/UniverSR (MIT, ICASSP 2026): trainable and finetunable on cons
 6. Inference and evaluate: ODE OLA, level restore, ensemble, stereo mode, cutoff detector with override.
 7. Configs per VRAM tier (8/11/16 GB), memory profiler utility, arm configs.
 8. TUI deltas, launchers, smoke tests.
+
+## Upstream training distribution (keep data matched)
+- Samples are random 32767-sample crops (~0.68 s, `num_samples`) of whole files, one per file per epoch, mean-downmixed to mono. We crop from cached 3 s chunks at 50% overlap (every crop fits inside some chunk) and take a single channel via `stereo_alternation`.
+- Upstream draws one bandwidth per batch; we use a per-sample cutoff in Hz.
+- Upstream val is the first 5 s of each file; ours is two 10 s highest-RMS clips per song (ViSQOL-compliant).
 
 ## Versioning
 `VERSION` file, MAJOR.MINOR.PATCH.MICRO. Commit message is the version only.
