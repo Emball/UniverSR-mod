@@ -103,8 +103,19 @@ def restore(model, transform, lq, cutoff_hz, sr, steps=4, guidance=1.5,
     return to_wave(transform, full, length)
 
 
+def ola_window(n, fade_in, fade_out, device=None):
+    """Flat window with raised-cosine ramps only where chunks overlap, so file edges keep full weight."""
+    w = torch.ones(n, device=device)
+    fi, fo = min(int(fade_in), n), min(int(fade_out), n)
+    if fi > 0:
+        w[:fi] = 0.5 * (1 - torch.cos(torch.pi * (torch.arange(fi, device=device) + 0.5) / fi))
+    if fo > 0:
+        w[n - fo:] = w[n - fo:] * (0.5 * (1 + torch.cos(torch.pi * (torch.arange(fo, device=device) + 0.5) / fo)))
+    return w
+
+
 @torch.no_grad()
-def restore_long(model, transform, lq, cutoff_hz, sr, chunk_sec=None, overlap_sec=0.5, **kw):
+def restore_long(model, transform, lq, cutoff_hz, sr, chunk_sec=None, overlap_sec=0.5, progress=None, **kw):
     """Chunked overlap-add restoration of [1,N] or [B,1,N]; chunk_sec=None runs in one pass."""
     squeeze = lq.ndim == 2
     if squeeze:
@@ -112,9 +123,12 @@ def restore_long(model, transform, lq, cutoff_hz, sr, chunk_sec=None, overlap_se
     N = lq.shape[-1]
     if chunk_sec is None or N <= int(chunk_sec * sr):
         out = restore(model, transform, lq, cutoff_hz, sr, **kw)
+        if progress:
+            progress(N, N)
         return out[0] if squeeze else out
     chunk = int(chunk_sec * sr)
-    hop = max(1, chunk - int(overlap_sec * sr))
+    overlap = min(int(overlap_sec * sr), chunk - 1)
+    hop = max(1, chunk - overlap)
     out = torch.zeros(lq.shape[0], 1, N, device=lq.device)
     wsum = torch.zeros(N, device=lq.device)
     start = 0
@@ -122,9 +136,11 @@ def restore_long(model, transform, lq, cutoff_hz, sr, chunk_sec=None, overlap_se
         end = min(start + chunk, N)
         piece = restore(model, transform, lq[..., start:end], cutoff_hz, sr, **kw)
         n = end - start
-        w = torch.hann_window(n, periodic=False, device=lq.device) if n >= 2 else torch.ones(n, device=lq.device)
+        w = ola_window(n, overlap if start > 0 else 0, overlap if end < N else 0, lq.device)
         out[..., start:end] += piece[..., :n] * w
         wsum[start:end] += w
+        if progress:
+            progress(end, N)
         if end == N:
             break
         start += hop
