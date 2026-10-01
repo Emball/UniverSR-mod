@@ -1,0 +1,12 @@
+{
+  "name": "default",
+  "description": "FFmpeg-only chain: WMA 128k -> LAME q5 -> LAME q2. No external codecs required.",
+  "tools": {
+    "ffmpeg": "ffmpeg"
+  },
+  "chain": [
+    { "type": "wma_encode", "bitrate": "128k" },
+    { "type": "mp3_lame", "quality": 5 },
+    { "type": "mp3_lame", "quality": 2 }
+  ]
+}

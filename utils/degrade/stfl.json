@@ -1,0 +1,16 @@
+{
+  "name": "stfl",
+  "description": "Estimated STFL chain: WMA 128k -> 6 LAME passes alternating q5/q2 at varying bitrates.",
+  "tools": {
+    "ffmpeg": "ffmpeg"
+  },
+  "chain": [
+    { "type": "wma_encode", "bitrate": "128k" },
+    { "type": "mp3_lame", "quality": 5 },
+    { "type": "mp3_lame", "quality": 2 },
+    { "type": "mp3_lame", "quality": 5 },
+    { "type": "mp3_lame", "quality": 2 },
+    { "type": "mp3_lame", "quality": 5 },
+    { "type": "mp3_lame", "bitrate": 192 }
+  ]
+}
