@@ -191,6 +191,29 @@ def reconcile_resume_ckpt(ckpt_path, system, run_dir):
     return out
 
 
+class ConfigLR(Callback):
+    """Lightning restores the optimizer's saved lr and the scheduler's base lr on resume; reapply the config's."""
+
+    def __init__(self, expected):
+        self.expected = list(expected)
+
+    def on_train_start(self, trainer, pl_module):
+        opts = trainer.optimizers
+        groups = opts[0].param_groups if opts else []
+        if len(groups) != len(self.expected):
+            return
+        old = [g["lr"] for g in groups]
+        for g, lr in zip(groups, self.expected):
+            g["lr"] = lr
+            g["initial_lr"] = lr
+        for cfg in trainer.lr_scheduler_configs:
+            if hasattr(cfg.scheduler, "base_lrs") and len(cfg.scheduler.base_lrs) == len(self.expected):
+                cfg.scheduler.base_lrs = list(self.expected)
+        if any(abs(o - e) > 1e-12 for o, e in zip(old, self.expected)):
+            log.info("[lr] resumed lr overridden from config: %s -> %s",
+                     ", ".join(f"{o:g}" for o in old), ", ".join(f"{e:g}" for e in self.expected))
+
+
 class StepPrinter(Callback):
     def __init__(self, base_dir, run_dir, interrupt):
         self.base_dir, self.run_dir, self.interrupt = base_dir, run_dir, interrupt
@@ -398,6 +421,8 @@ def train(cfg: DictConfig):
 
     interrupt = {"requested": False}
     callbacks = [StepPrinter(base_dir, run_dir, interrupt)]
+    if getattr(system.optimizer, "param_groups", None):
+        callbacks.append(ConfigLR([g["lr"] for g in system.optimizer.param_groups]))
     val_disabled = float(tr.get("limit_val_batches", 1.0)) == 0.0
     checkpoint = None
     if not val_disabled:
