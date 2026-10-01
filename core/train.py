@@ -422,7 +422,7 @@ def train(cfg: DictConfig):
     interrupt = {"requested": False}
     callbacks = [StepPrinter(base_dir, run_dir, interrupt)]
     if getattr(system.optimizer, "param_groups", None):
-        callbacks.append(ConfigLR([g["lr"] for g in system.optimizer.param_groups]))
+        callbacks.append(ConfigLR([g.get("initial_lr", g["lr"]) for g in system.optimizer.param_groups]))
     val_disabled = float(tr.get("limit_val_batches", 1.0)) == 0.0
     checkpoint = None
     if not val_disabled:
