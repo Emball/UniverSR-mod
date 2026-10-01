@@ -64,9 +64,9 @@ def decode_to_wav_cache(src: str, cache_dir: str) -> str:
                 msg = e.stderr.decode(errors="replace") if e.stderr else ""
                 raise RuntimeError(f"ffmpeg failed to decode {src}:\n{msg}") from e
         else:
-            log.warning("ffmpeg-python not installed; decoding %s with torchaudio", src)
-            wav, sr = torchaudio.load(src)
-            torchaudio.save(tmp, wav.float(), sr, encoding="PCM_F", bits_per_sample=32)
+            log.warning("ffmpeg-python not installed; decoding %s with soundfile", src)
+            wav, sr = read_wav(src)
+            save_wav_f32(wav, tmp, sr)
         os.replace(tmp, dst)
     except Exception:
         if os.path.exists(tmp):
@@ -76,10 +76,23 @@ def decode_to_wav_cache(src: str, cache_dir: str) -> str:
     return dst
 
 
+def read_wav(path: str, frame_offset: int = 0, num_frames: int = -1):
+    # soundfile instead of torchaudio.load: torchaudio >= 2.9 needs TorchCodec for I/O
+    import soundfile as sf
+    data, sr = sf.read(path, start=max(0, int(frame_offset)), frames=int(num_frames), dtype="float32", always_2d=True)
+    return torch.from_numpy(data.T.copy()), sr
+
+
+def wav_info(path: str):
+    import soundfile as sf
+    i = sf.info(path)
+    return i.samplerate, i.frames
+
+
 def load_audio(path: str, sr: int, cache_dir: str, trim_samples: int = 0) -> torch.Tensor:
     """Decode, trim trim_samples at the file's own rate, resample to sr, return (C<=2, N) float32."""
     wav_path = decode_to_wav_cache(path, cache_dir)
-    wav, file_sr = torchaudio.load(wav_path, frame_offset=max(0, trim_samples))
+    wav, file_sr = read_wav(wav_path, frame_offset=trim_samples)
     wav = wav.float()
     if wav.shape[0] > 2:
         wav = wav[:2]

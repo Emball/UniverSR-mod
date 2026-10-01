@@ -15,11 +15,10 @@ from typing import List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
-import torchaudio
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 
-from audio_io import resample
+from audio_io import read_wav, resample, wav_info
 from augment import AugmentationCfg, augment_pair, parse_live_aug_cfg
 from cutoff import resolve_cutoff_hz
 
@@ -34,7 +33,7 @@ CutoffSpec = Union[None, str, float, Sequence[float]]
 
 def load_wav(path: str, target_sr: int = SR) -> torch.Tensor:
     global _warned_resample
-    wav, sr = torchaudio.load(path)
+    wav, sr = read_wav(path)
     if sr != target_sr:
         if not _warned_resample:
             log.warning("resampling %s from %d to %d at load time; chunk cache should already be at the target rate",
@@ -171,11 +170,10 @@ class FullLengthPairDataset(Dataset):
 
         self.index = []
         for pair_idx, (lq_path, hq_path) in enumerate(self.pairs):
-            li, hi = torchaudio.info(lq_path), torchaudio.info(hq_path)
-            if li.sample_rate != sr or hi.sample_rate != sr:
-                log.warning("%s is %d Hz, expected %d; frame offsets are in file samples",
-                            lq_path, li.sample_rate, sr)
-            m = min(li.num_frames, hi.num_frames)
+            (lsr, lframes), (hsr, hframes) = wav_info(lq_path), wav_info(hq_path)
+            if lsr != sr or hsr != sr:
+                log.warning("%s is %d Hz, expected %d; frame offsets are in file samples", lq_path, lsr, sr)
+            m = min(lframes, hframes)
             s = 0
             while s + self.segment_samples <= m:
                 self.index.append((pair_idx, s))
@@ -188,8 +186,8 @@ class FullLengthPairDataset(Dataset):
     def __getitem__(self, idx: int):
         pair_idx, start = self.index[idx]
         lq_path, hq_path = self.pairs[pair_idx]
-        lq, _ = torchaudio.load(lq_path, frame_offset=start, num_frames=self.segment_samples)
-        hq, _ = torchaudio.load(hq_path, frame_offset=start, num_frames=self.segment_samples)
+        lq, _ = read_wav(lq_path, start, self.segment_samples)
+        hq, _ = read_wav(hq_path, start, self.segment_samples)
         ch = min(pair_idx % 2, lq.shape[0] - 1)
         lq, hq = lq[ch:ch + 1], hq[min(ch, hq.shape[0] - 1):min(ch, hq.shape[0] - 1) + 1]
         if self.val_peak_dbfs is not None:
