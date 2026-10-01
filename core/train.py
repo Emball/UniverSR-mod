@@ -172,6 +172,10 @@ def reconcile_resume_ckpt(ckpt_path, system, run_dir):
 class StepPrinter(Callback):
     def __init__(self, base_dir, run_dir, interrupt):
         self.base_dir, self.run_dir, self.interrupt = base_dir, run_dir, interrupt
+        self.total, self.last_step, self.last_idx = 0, 0, 0
+        self.t0, self.done = None, 0
+        self.val_elapsed, self.val_t0 = 0.0, None
+        self.sanity = True
 
     def on_train_epoch_start(self, trainer, pl_module):
         self.total = trainer.num_training_batches
