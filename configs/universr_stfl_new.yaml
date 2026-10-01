@@ -114,7 +114,7 @@ optimizer:
   lr: 3.0e-5               # was 1e-5 (Apollo lr_g); raised when ViSQOL gains flattened. new-part groups get lr_mult x this
   weight_decay: 0.01
   betas: [0.9, 0.999]
-  lr_mult: {"init_conv.": 10.0, "bw_embedder.": 10.0}   # new aligned channels and bandwidth embedding learn 10x faster (adamw only)
+  lr_mult: {"init_conv.": 3.0, "bw_embedder.": 3.0}   # new aligned channels and bandwidth embedding: 3x base = ~1e-4, the rate they first learned fast at (adamw only)
 
 # Apollo StepLR(2, 0.98) steps per epoch there; here the scheduler steps per optimizer step and would
 # collapse the lr, so constant after a short warmup.
