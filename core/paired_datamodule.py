@@ -19,6 +19,7 @@ import torchaudio
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 
+from audio_io import resample
 from augment import AugmentationCfg, augment_pair, parse_live_aug_cfg
 from cutoff import resolve_cutoff_hz
 
@@ -39,7 +40,7 @@ def load_wav(path: str, target_sr: int = SR) -> torch.Tensor:
             log.warning("resampling %s from %d to %d at load time; chunk cache should already be at the target rate",
                         path, sr, target_sr)
             _warned_resample = True
-        wav = torchaudio.functional.resample(wav, sr, target_sr)
+        wav = resample(wav, sr, target_sr)
     if wav.shape[0] > 2:
         wav = wav[:2]
     return wav
